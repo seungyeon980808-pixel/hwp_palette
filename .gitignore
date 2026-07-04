@@ -1,0 +1,19 @@
+# API 키/설정 (절대 커밋 금지)
+config.json
+*.env
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 빌드 산출물
+dist/
+build/
+*.exe
+
+# 임시 한글 파일
+~$*.hwp
+~$*.hwpx
