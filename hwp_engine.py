@@ -1,10 +1,23 @@
 # -*- coding: utf-8 -*-
 """한컴 자동화(pyhwpx) 엔진 — Tkinter/UI에 의존하지 않는다.
-실패는 예외로 올라간다. 메시지박스/상태표시는 호출부(main.py)의 책임."""
+
+표/박스의 모든 치수·글꼴·테두리는 활성 스펙(S)에서 읽는다. S는 settings.py의
+프리셋에서 온다. 실패는 예외로 올라간다. 메시지박스/상태표시는 호출부의 책임.
+"""
 
 from pyhwpx import Hwp
+import settings
 
 hwp = None
+
+# 활성 스펙(프리셋). main.py가 시작 시 set_active_spec()으로 주입한다.
+S = settings.default_spec()
+
+
+def set_active_spec(spec):
+    """설정 창에서 프리셋을 바꾸거나 저장하면 호출된다."""
+    global S
+    S = spec
 
 
 def connect():
@@ -18,6 +31,7 @@ def connect():
         return hwp
 
 
+# ── 문서/선택 ─────────────────────────────────────────
 def new_document():
     hwp.HAction.Run("FileNew")
 
@@ -49,7 +63,31 @@ def run_action(action):
     hwp.HAction.Run(action)
 
 
+# ── 텍스트/글꼴 ───────────────────────────────────────
+def set_char_shape(font, size_pt):
+    act = hwp.HAction
+    ps = hwp.HParameterSet
+    act.GetDefault("CharShape", ps.HCharShape.HSet)
+    ps.HCharShape.FaceNameHangul = font
+    ps.HCharShape.FaceNameLatin  = font
+    ps.HCharShape.Height = hwp.PointToHwpUnit(size_pt)
+    act.Execute("CharShape", ps.HCharShape.HSet)
+
+
+def _maybe_apply_font():
+    f = S.get("font", {})
+    if f.get("apply"):
+        set_char_shape(f.get("name", "함초롬바탕"), f.get("size_pt", 10))
+
+
+def _text(s):
+    """생성 문항용 텍스트 삽입 — 글꼴 강제 적용 옵션을 반영한다."""
+    _maybe_apply_font()
+    hwp.insert_text(s)
+
+
 def insert_plain(text):
+    """서식/원문자 버튼용 단순 삽입 — 글꼴 강제 적용 안 함(현재 문서 서식 유지)."""
     act = hwp.HAction
     ps = hwp.HParameterSet
     act.GetDefault("InsertText", ps.HInsertText.HSet)
@@ -110,22 +148,21 @@ def insert_picture_to_cell(img_path):
     hwp.insert_picture(str(img_path))
 
 
-# ── 표/박스 내부 공통 헬퍼 ─────────────────────────────
-def _make_transparent_border(act, ps):
-    act.GetDefault("CellBorderFill", ps.HCellBorderFill.HSet)
-    ps.HCellBorderFill.BorderTypeBottom = hwp.HwpLineType("None")
-    ps.HCellBorderFill.BorderTypeTop    = hwp.HwpLineType("None")
-    ps.HCellBorderFill.BorderTypeRight  = hwp.HwpLineType("None")
-    ps.HCellBorderFill.BorderTypeLeft   = hwp.HwpLineType("None")
-    act.Execute("CellBorderFill", ps.HCellBorderFill.HSet)
+# ── 표/박스 공통 헬퍼 ─────────────────────────────────
+def _mm(v):
+    return hwp.MiliToHwpUnit(v)
 
 
-def _make_solid_border(act, ps):
+def _col_width_mm():
+    return S["layout"]["column_width_mm"]
+
+
+def _set_cell_border(act, ps, top, bottom, left, right):
     act.GetDefault("CellBorderFill", ps.HCellBorderFill.HSet)
-    ps.HCellBorderFill.BorderTypeBottom = hwp.HwpLineType("Solid")
-    ps.HCellBorderFill.BorderTypeTop    = hwp.HwpLineType("Solid")
-    ps.HCellBorderFill.BorderTypeRight  = hwp.HwpLineType("Solid")
-    ps.HCellBorderFill.BorderTypeLeft   = hwp.HwpLineType("Solid")
+    ps.HCellBorderFill.BorderTypeTop    = hwp.HwpLineType(top)
+    ps.HCellBorderFill.BorderTypeBottom = hwp.HwpLineType(bottom)
+    ps.HCellBorderFill.BorderTypeLeft   = hwp.HwpLineType(left)
+    ps.HCellBorderFill.BorderTypeRight  = hwp.HwpLineType(right)
     act.Execute("CellBorderFill", ps.HCellBorderFill.HSet)
 
 
@@ -135,146 +172,115 @@ def _exit_table(act):
     act.Run("MoveLineEnd")
 
 
-# ── 자료박스 ───────────────────────────────────────────
-def insert_material_box(text):
-    # 자료: - 93.99mm, 2행2열 투명, 1행 높이 45mm / 2행 높이 5mm
+def _create_table(rows, cols, total_mm, row_heights_mm):
+    """rows×cols 표 생성. 열은 total_mm를 균등 분할(단 폭 하나에서 자동 계산)."""
     act = hwp.HAction
     ps  = hwp.HParameterSet
     act.GetDefault("TableCreate", ps.HTableCreation.HSet)
-    ps.HTableCreation.Rows       = 2
-    ps.HTableCreation.Cols       = 2
+    ps.HTableCreation.Rows       = rows
+    ps.HTableCreation.Cols       = cols
     ps.HTableCreation.WidthType  = 0
     ps.HTableCreation.HeightType = 1
-    ps.HTableCreation.WidthValue = hwp.MiliToHwpUnit(93.99)
-    ps.HTableCreation.CreateItemArray("ColWidth", 2)
-    ps.HTableCreation.ColWidth.SetItem(0, hwp.MiliToHwpUnit(46.99))
-    ps.HTableCreation.ColWidth.SetItem(1, hwp.MiliToHwpUnit(47.0))
-    ps.HTableCreation.CreateItemArray("RowHeight", 2)
-    ps.HTableCreation.RowHeight.SetItem(0, hwp.MiliToHwpUnit(45.0))
-    ps.HTableCreation.RowHeight.SetItem(1, hwp.MiliToHwpUnit(5.0))
+    ps.HTableCreation.WidthValue = _mm(total_mm)
+    ps.HTableCreation.CreateItemArray("ColWidth", cols)
+    # 균등 분할하되 반올림 오차를 마지막 칸에서 흡수
+    each = total_mm / cols
+    acc = 0.0
+    for i in range(cols):
+        w = (total_mm - acc) if i == cols - 1 else each
+        ps.HTableCreation.ColWidth.SetItem(i, _mm(w))
+        acc += each
+    ps.HTableCreation.CreateItemArray("RowHeight", rows)
+    for i in range(rows):
+        ps.HTableCreation.RowHeight.SetItem(i, _mm(row_heights_mm[i]))
     act.Execute("TableCreate", ps.HTableCreation.HSet)
 
-    def _trans():
+
+# ── 자료박스 ───────────────────────────────────────────
+def insert_material_box(text):
+    """자료: - 단 폭, 2행2열, 각 셀 테두리는 설정값(기본 투명)"""
+    act = hwp.HAction
+    ps  = hwp.HParameterSet
+    box = S["material_box"]
+    bt  = S["border"]["material_type"]
+    _create_table(2, 2, _col_width_mm(),
+                  [box["row1_height_mm"], box["row2_height_mm"]])
+
+    def _cell():
         act.Run("TableCellBlock")
-        _make_transparent_border(act, ps)
+        _set_cell_border(act, ps, bt, bt, bt, bt)
         act.Run("Cancel")
 
-    _trans()                    # 1행1열 (현재 위치)
-    act.Run("TableRightCell")   # 1행2열
-    _trans()
-    act.Run("TableRightCell")   # 2행1열로 이동
-    _trans()
-    act.Run("TableRightCell")   # 2행2열
-    _trans()
-    act.Run("TableLeftCell")    # 1행1열로 복귀
+    _cell()                     # 1행1열 (현재 위치)
+    act.Run("TableRightCell"); _cell()   # 1행2열
+    act.Run("TableRightCell"); _cell()   # 2행1열
+    act.Run("TableRightCell"); _cell()   # 2행2열
+    act.Run("TableLeftCell")             # 1행1열로 복귀
     act.Run("TableLeftCell")
     act.Run("TableLeftCell")
-    hwp.insert_text(text)
+    _text(text)
     _exit_table(act)
 
 
 def insert_photo_box():
-    # 사진자료: - 2행2열, 93.99mm, 전체 투명, 1행 높이 50mm / 2행 높이 10mm
+    """사진자료: - 단 폭, 2행2열, 전체 투명 + 중앙정렬"""
     act = hwp.HAction
     ps  = hwp.HParameterSet
-    act.GetDefault("TableCreate", ps.HTableCreation.HSet)
-    ps.HTableCreation.Rows       = 2
-    ps.HTableCreation.Cols       = 2
-    ps.HTableCreation.WidthType  = 0
-    ps.HTableCreation.HeightType = 1
-    ps.HTableCreation.WidthValue = hwp.MiliToHwpUnit(93.99)
-    ps.HTableCreation.CreateItemArray("ColWidth", 2)
-    ps.HTableCreation.ColWidth.SetItem(0, hwp.MiliToHwpUnit(46.99))
-    ps.HTableCreation.ColWidth.SetItem(1, hwp.MiliToHwpUnit(47.0))
-    ps.HTableCreation.CreateItemArray("RowHeight", 2)
-    ps.HTableCreation.RowHeight.SetItem(0, hwp.MiliToHwpUnit(45.0))
-    ps.HTableCreation.RowHeight.SetItem(1, hwp.MiliToHwpUnit(7.0))
-    act.Execute("TableCreate", ps.HTableCreation.HSet)
+    box = S["photo_box"]
+    _create_table(2, 2, _col_width_mm(),
+                  [box["row1_height_mm"], box["row2_height_mm"]])
 
-    def _trans_center():
+    def _cell_center():
         act.Run("TableCellBlock")
-        _make_transparent_border(act, ps)
+        _set_cell_border(act, ps, "None", "None", "None", "None")
         act.Run("Cancel")
         act.Run("ParagraphShapeAlignCenter")
 
-    _trans_center()
-    act.Run("TableRightCell"); _trans_center()
-    act.Run("TableRightCell"); _trans_center()
-    act.Run("TableRightCell"); _trans_center()
+    _cell_center()
+    act.Run("TableRightCell"); _cell_center()
+    act.Run("TableRightCell"); _cell_center()
+    act.Run("TableRightCell"); _cell_center()
     _exit_table(act)
 
 
 def insert_experiment_box():
-    # 실험자료: - 93.99mm 실선 1칸, 높이 80mm, [실험 과정] 텍스트
+    """실험자료: - 단 폭 1칸, 설정 높이, 설정 테두리, 안내 문구"""
     act = hwp.HAction
     ps  = hwp.HParameterSet
-    act.GetDefault("TableCreate", ps.HTableCreation.HSet)
-    ps.HTableCreation.Rows       = 1
-    ps.HTableCreation.Cols       = 1
-    ps.HTableCreation.WidthType  = 0
-    ps.HTableCreation.HeightType = 1
-    ps.HTableCreation.WidthValue = hwp.MiliToHwpUnit(93.99)
-    ps.HTableCreation.CreateItemArray("RowHeight", 1)
-    ps.HTableCreation.RowHeight.SetItem(0, hwp.MiliToHwpUnit(80.0))
-    act.Execute("TableCreate", ps.HTableCreation.HSet)
+    box = S["experiment_box"]
+    bt  = S["border"]["experiment_type"]
+    _create_table(1, 1, _col_width_mm(), [box["height_mm"]])
     act.Run("TableCellBlock")
-    _make_solid_border(act, ps)
+    _set_cell_border(act, ps, bt, bt, bt, bt)
     act.Run("Cancel")
-    hwp.insert_text("[실험 과정]")
+    _text(box["label"])
     _exit_table(act)
 
 
 # ── 보기박스 ───────────────────────────────────────────
 def insert_bogi_box(items=None):
-    """〈보 기〉 박스 — 박승연 선생님 키로그 기반 구조
-
-    키로그:
-        표생성
-        에에에전테엔       → 전체 테두리 삭제
-        에에상좌좌좌좌바테엔 → 2~3행 바깥 테두리
-        우우에에병합<보기>  → 3열 병합 후 〈보기〉
-        아좌좌에에우우우우병합 → 3행 전체 병합 후 ㄱㄴㄷ
-        1행3열+2행3열 병합  → 〈보기〉 위치 확정
-    """
+    """〈보 기〉 박스 — 3행 5열 표를 병합해 만든다. 치수·테두리·여백·줄간격은 설정값."""
     act = hwp.HAction
     ps  = hwp.HParameterSet
+    box = S["bogi_box"]
+    bt  = S["border"]["bogi_type"]
 
-    # 표 생성 (3행 5열, 너비 93.99mm)
-    act.GetDefault("TableCreate", ps.HTableCreation.HSet)
-    ps.HTableCreation.Rows       = 3
-    ps.HTableCreation.Cols       = 5
-    ps.HTableCreation.WidthType  = 0
-    ps.HTableCreation.HeightType = 1
-    ps.HTableCreation.WidthValue = hwp.MiliToHwpUnit(93.99)
-    ps.HTableCreation.CreateItemArray("ColWidth", 5)
-    ps.HTableCreation.ColWidth.SetItem(0, hwp.MiliToHwpUnit(19.2))
-    ps.HTableCreation.ColWidth.SetItem(1, hwp.MiliToHwpUnit(19.2))
-    ps.HTableCreation.ColWidth.SetItem(2, hwp.MiliToHwpUnit(19.2))
-    ps.HTableCreation.ColWidth.SetItem(3, hwp.MiliToHwpUnit(19.2))
-    ps.HTableCreation.ColWidth.SetItem(4, hwp.MiliToHwpUnit(19.2))
-    ps.HTableCreation.CreateItemArray("RowHeight", 3)
-    ps.HTableCreation.RowHeight.SetItem(0, hwp.MiliToHwpUnit(3.0))
-    ps.HTableCreation.RowHeight.SetItem(1, hwp.MiliToHwpUnit(3.0))
-    ps.HTableCreation.RowHeight.SetItem(2, hwp.MiliToHwpUnit(20.0))
-    act.Execute("TableCreate", ps.HTableCreation.HSet)
+    _create_table(3, 5, _col_width_mm(),
+                  [box["title_height_mm"], box["gap_height_mm"],
+                   box["content_height_mm"]])
 
     # 전체 테두리 삭제
     act.Run("TableCellBlock")
     act.Run("TableCellBlockExtend")
     act.Run("TableCellBlockExtend")
-    act.GetDefault("CellBorderFill", ps.HCellBorderFill.HSet)
-    ps.HCellBorderFill.BorderTypeBottom = hwp.HwpLineType("None")
-    ps.HCellBorderFill.BorderTypeTop    = hwp.HwpLineType("None")
-    ps.HCellBorderFill.BorderTypeRight  = hwp.HwpLineType("None")
-    ps.HCellBorderFill.BorderTypeLeft   = hwp.HwpLineType("None")
-    act.Execute("CellBorderFill", ps.HCellBorderFill.HSet)
+    _set_cell_border(act, ps, "None", "None", "None", "None")
     act.GetDefault("CellBorderFill", ps.HCellBorderFill.HSet)
     ps.HCellBorderFill.TypeVert = hwp.HwpLineType("None")
     ps.HCellBorderFill.TypeHorz = hwp.HwpLineType("None")
     act.Execute("CellBorderFill", ps.HCellBorderFill.HSet)
     act.Run("Cancel")
 
-    # 2~3행 바깥 테두리
+    # 2~3행 바깥 테두리 (설정 테두리 종류)
     act.Run("TableCellBlock")
     act.Run("TableCellBlockExtend")
     act.Run("TableUpperCell")
@@ -282,22 +288,17 @@ def insert_bogi_box(items=None):
     act.Run("TableLeftCell")
     act.Run("TableLeftCell")
     act.Run("TableLeftCell")
-    act.GetDefault("CellBorderFill", ps.HCellBorderFill.HSet)
-    ps.HCellBorderFill.BorderTypeTop    = hwp.HwpLineType("Solid")
-    ps.HCellBorderFill.BorderTypeBottom = hwp.HwpLineType("Solid")
-    ps.HCellBorderFill.BorderTypeLeft   = hwp.HwpLineType("Solid")
-    ps.HCellBorderFill.BorderTypeRight  = hwp.HwpLineType("Solid")
-    act.Execute("CellBorderFill", ps.HCellBorderFill.HSet)
+    _set_cell_border(act, ps, bt, bt, bt, bt)
     act.Run("Cancel")
 
-    # 3열 병합 후 〈보기〉
+    # 3열 병합 후 〈보 기〉
     act.Run("TableRightCell")
     act.Run("TableRightCell")
     act.Run("TableCellBlock")
     act.Run("TableCellBlockExtend")
     act.Run("TableMergeCell")
     act.Run("ParagraphShapeAlignCenter")
-    hwp.insert_text("〈보 기〉")
+    _text(box["title"])
 
     # 3행 전체 병합 후 ㄱㄴㄷ
     act.Run("TableLowerCell")
@@ -311,27 +312,31 @@ def insert_bogi_box(items=None):
     act.Run("TableRightCell")
     act.Run("TableMergeCell")
 
-    # ㄱㄴㄷ 입력
-    hwp.set_cell_margin(left=2.0, right=2.0, top=0.5, bottom=4.0, as_="mm")
+    # ㄱㄴㄷ 입력 — 셀 여백/줄간격 설정
+    hwp.set_cell_margin(
+        left=box["cell_margin_left_mm"], right=box["cell_margin_right_mm"],
+        top=box["cell_margin_top_mm"], bottom=box["cell_margin_bottom_mm"],
+        as_="mm")
     act.Run("ParagraphShapeAlignJustify")
     act.GetDefault("ParagraphShape", ps.HParaShape.HSet)
-    ps.HParaShape.LineSpacing     = 130
+    ps.HParaShape.LineSpacing     = box["line_spacing"]
     ps.HParaShape.LineSpacingType = 0
     act.Execute("ParagraphShape", ps.HParaShape.HSet)
+
     if items:
         labels = ["ㄱ", "ㄴ", "ㄷ", "ㄹ", "ㅁ"]
         real = [it for it in items if it.strip()]
         for i, item in enumerate(real[:5]):
             if i > 0:
                 act.Run("BreakPara")
-            hwp.insert_text(f"{labels[i]}. ")
+            _text(f"{labels[i]}. ")
             act.Run("Indent")   # Alt+Shift+Tab 들여쓰기
-            hwp.insert_text(item)
+            _text(item)
     else:
         for i, label in enumerate(["ㄱ", "ㄴ", "ㄷ"]):
             if i > 0:
                 act.Run("BreakPara")
-            hwp.insert_text(f"{label}. ")
+            _text(f"{label}. ")
             act.Run("Indent")
 
     # 1행3열+2행3열 병합 → 〈보기〉 위치 확정
@@ -351,6 +356,7 @@ def insert_bogi_box(items=None):
 def insert_question(data, num=1, use_num=True):
     """반환값: 문항번호 자동증가가 필요하면 True (data['num']이 비어있고 use_num=True)"""
     act = hwp.HAction
+    stem_cfg = S["stem"]
 
     if data['stem']:
         ps_s = hwp.HParameterSet
@@ -358,14 +364,14 @@ def insert_question(data, num=1, use_num=True):
         act.GetDefault("ParagraphShape", ps_s.HParaShape.HSet)
         ps_s.HParaShape.LeftMargin    = 0
         ps_s.HParaShape.RightMargin   = 0
-        ps_s.HParaShape.Indentation   = -399
-        ps_s.HParaShape.LineSpacing   = 150
+        ps_s.HParaShape.Indentation   = stem_cfg["indentation"]
+        ps_s.HParaShape.LineSpacing   = stem_cfg["line_spacing"]
         ps_s.HParaShape.AlignType     = 0
         act.Execute("ParagraphShape", ps_s.HParaShape.HSet)
         if use_num:
-            hwp.insert_text(f"{display_num}. {data['stem']}")
+            _text(f"{display_num}. {data['stem']}")
         else:
-            hwp.insert_text(data['stem'])
+            _text(data['stem'])
         act.Run("BreakPara")
         act.GetDefault("ParagraphShape", ps_s.HParaShape.HSet)
         ps_s.HParaShape.Indentation   = 0
@@ -382,13 +388,14 @@ def insert_question(data, num=1, use_num=True):
 
     # 질문
     if data['question']:
+        q_cfg = S["question"]
         ps2 = hwp.HParameterSet
         act.GetDefault("ParagraphShape", ps2.HParaShape.HSet)
         ps2.HParaShape.Indentation = 0
-        ps2.HParaShape.PrevSpacing = 800   # 위 간격 약 4pt
-        ps2.HParaShape.NextSpacing = 400   # 아래 간격 약 2pt
+        ps2.HParaShape.PrevSpacing = q_cfg["prev_spacing"]
+        ps2.HParaShape.NextSpacing = q_cfg["next_spacing"]
         act.Execute("ParagraphShape", ps2.HParaShape.HSet)
-        hwp.insert_text("  " + data['question'])
+        _text("  " + data['question'])
         act.GetDefault("ParagraphShape", ps2.HParaShape.HSet)
         ps2.HParaShape.Indentation = 0
         ps2.HParaShape.PrevSpacing = 0
@@ -409,10 +416,13 @@ def insert_question(data, num=1, use_num=True):
 
 
 def _insert_choices(data):
-    """선지 - 표 기반 배치 (길이 비례 칸폭, 줄바꿈 방지)"""
+    """선지 - 표 기반 배치 (단 폭 균등 분할, 줄바꿈 방지)"""
     act = hwp.HAction
+    ps  = hwp.HParameterSet
     circles = ["①", "②", "③", "④", "⑤"]
     ctype = data.get('choices_type', '5')
+    row_h = S["choices"]["row_height_mm"]
+    total_mm = _col_width_mm()
     jamo_order = ['ㄱ','ㄴ','ㄷ','ㄹ','ㅁ','ㅂ','ㅅ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ']
 
     def fmt_choice(c):
@@ -423,40 +433,17 @@ def _insert_choices(data):
     ch = [fmt_choice(c) for c in data['choices'][:5]]
     parts = [f"{circles[i]} {c}" for i, c in enumerate(ch)]
 
-    TOTAL_MM = 93.99
-
     def _draw_choice_table(rows, cols, layout):
-        """rows×cols 투명 표를 만들어 layout대로 선지 텍스트 입력.
-        layout: {(행,열): part문자열} — 없는 칸은 빈칸.
-        칸은 cols 균등 분할(위아래 같은 열이 정확히 정렬됨)."""
-        col_w = TOTAL_MM / cols
-        ps_c = hwp.HParameterSet
-        act.GetDefault("TableCreate", ps_c.HTableCreation.HSet)
-        ps_c.HTableCreation.Rows       = rows
-        ps_c.HTableCreation.Cols       = cols
-        ps_c.HTableCreation.WidthType  = 0
-        ps_c.HTableCreation.HeightType = 1
-        ps_c.HTableCreation.WidthValue = hwp.MiliToHwpUnit(TOTAL_MM)
-        ps_c.HTableCreation.CreateItemArray("ColWidth", cols)
-        for i in range(cols):
-            ps_c.HTableCreation.ColWidth.SetItem(i, hwp.MiliToHwpUnit(col_w))
-        ps_c.HTableCreation.CreateItemArray("RowHeight", rows)
-        for i in range(rows):
-            ps_c.HTableCreation.RowHeight.SetItem(i, hwp.MiliToHwpUnit(6.0))
-        act.Execute("TableCreate", ps_c.HTableCreation.HSet)
+        """rows×cols 투명 표. layout: {(행,열): part}. 칸은 cols 균등 분할."""
+        _create_table(rows, cols, total_mm, [row_h] * rows)
 
         def _trans_and_text(txt):
             act.Run("TableCellBlock")
-            act.GetDefault("CellBorderFill", ps_c.HCellBorderFill.HSet)
-            ps_c.HCellBorderFill.BorderTypeBottom = hwp.HwpLineType("None")
-            ps_c.HCellBorderFill.BorderTypeTop    = hwp.HwpLineType("None")
-            ps_c.HCellBorderFill.BorderTypeRight  = hwp.HwpLineType("None")
-            ps_c.HCellBorderFill.BorderTypeLeft   = hwp.HwpLineType("None")
-            act.Execute("CellBorderFill", ps_c.HCellBorderFill.HSet)
+            _set_cell_border(act, ps, "None", "None", "None", "None")
             act.Run("Cancel")
             act.Run("ParagraphShapeAlignLeft")
             if txt:
-                hwp.insert_text(txt)
+                _text(txt)
 
         for r in range(rows):
             for c in range(cols):
@@ -466,18 +453,17 @@ def _insert_choices(data):
         _exit_table(act)
 
     if ctype == '1':
-        ps_c = hwp.HParameterSet
-        act.GetDefault("ParagraphShape", ps_c.HParaShape.HSet)
-        ps_c.HParaShape.Indentation = 0
-        ps_c.HParaShape.PrevSpacing = 0
-        ps_c.HParaShape.NextSpacing = 0
-        ps_c.HParaShape.LeftMargin  = 0
-        ps_c.HParaShape.AlignType   = 0
-        act.Execute("ParagraphShape", ps_c.HParaShape.HSet)
+        act.GetDefault("ParagraphShape", ps.HParaShape.HSet)
+        ps.HParaShape.Indentation = 0
+        ps.HParaShape.PrevSpacing = 0
+        ps.HParaShape.NextSpacing = 0
+        ps.HParaShape.LeftMargin  = 0
+        ps.HParaShape.AlignType   = 0
+        act.Execute("ParagraphShape", ps.HParaShape.HSet)
         for i, p in enumerate(parts):
             if i > 0:
                 act.Run("BreakPara")
-            hwp.insert_text(p)
+            _text(p)
         act.Run("BreakPara")
     elif ctype == '3':
         layout = {(0, 0): parts[0], (0, 1): parts[1], (0, 2): parts[2]}

@@ -5,50 +5,59 @@
 
 버전 정보
 ─────────────────────────────────────────
+v1.1.0 (2026-07-05)
+  [기능 추가] 양식 프리셋 — 표/박스/글꼴의 모든 스펙을 프로그램 안에서 수정
+  - settings.py(프리셋 저장소) / settings_ui.py(설정 창) 추가
+  - 학교·시험지별로 양식을 이름 붙여 저장·전환, JSON으로 내보내/가져와 공유
+  - 단 폭(2단↔1단)·글꼴·글자크기·박스 높이·줄간격·셀 여백·테두리 전부 설정화
+  - hwp_engine의 하드코딩 치수를 활성 프리셋 참조로 교체
 v1.0.0 (2026-07-05)
   [이관] 30_exam_edit의 마크다운 변환기를 exam_scribe 프로젝트로 이식
   - parser.py(마크다운 파싱) / hwp_engine.py(한컴 자동화) / main.py(UI) 3파일로 분리
-  - 기능 변경 없음: 문항번호·자료박스·보기박스·선지·서식도구·사진삽입 그대로
   - [버그 수정] 마크다운 변환·원문자 삽입 시 클립보드를 임시 Tk 인스턴스로 읽어
-    간헐적으로 빈 값이 반환되던 문제 — "모든 변형을 기본으로"에만 적용돼 있던
-    메인 root 클립보드 + 재시도 로직을 전체 클립보드 읽기 지점에 통일 적용
+    간헐적으로 빈 값이 반환되던 문제 — 메인 root 클립보드 + 재시도로 통일
 ─────────────────────────────────────────
 """
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 RELEASE_DATE = "2026-07-05"
 
 import pathlib
 import time
 import tkinter as tk
 from tkinter import messagebox, filedialog
-import json
 
 import parser as md_parser
 import hwp_engine
+import settings
+import settings_ui
 
-# ── 설정 파일 (사진 폴더 경로 등) ──────────────────────
-CONFIG_PATH = pathlib.Path(__file__).parent / "config.json"
-
-
-def load_config():
-    try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def save_config(cfg):
-    try:
-        CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+# 설정 파일 입출력은 settings 모듈로 통합
+load_config = settings.load_config
+save_config = settings.save_config
 
 
 print(f"{'='*45}")
 print(f"  마크다운 → 한글 변환기 v{VERSION}")
 print(f"  실행: python {pathlib.Path(__file__).name}")
 print(f"{'='*45}")
+
+
+# ── 활성 양식 프리셋 로드 (시작 시 + 설정 저장 시) ──────
+hwp_engine.set_active_spec(settings.get_active_spec())
+
+
+def on_settings_saved(spec):
+    """설정 창에서 저장/전환 시 활성 스펙을 엔진에 반영."""
+    hwp_engine.set_active_spec(spec)
+    try:
+        status_var.set(f"✅ 양식: {settings.get_active_name()}")
+    except Exception:
+        pass
+
+
+def fn_open_settings():
+    settings_ui.open_settings(root, on_saved=on_settings_saved)
 
 
 # ── 한컴 연결 ───────────────────────────────────────────
@@ -279,6 +288,11 @@ for label, cmd in [("📄 새 문서", fn_new), ("📂 열기", fn_open), ("💾
               font=(FONT, 9), fg=TEXT, bg=CARD,
               activebackground=BORDER, bd=0, padx=12, pady=6,
               cursor="hand2").pack(side="left", padx=(0, 6))
+# 설정(양식 프리셋) 버튼 — 오른쪽 끝
+tk.Button(file_row, text="⚙ 양식 설정", command=fn_open_settings,
+          font=(FONT, 9), fg=TEXT, bg=CARD,
+          activebackground=BORDER, bd=0, padx=12, pady=6,
+          cursor="hand2").pack(side="right")
 
 # 안내 (접이식)
 guide_wrap = tk.Frame(root, bg=BG, padx=14, pady=4)
@@ -514,7 +528,7 @@ refresh_photo_list()
 root.bind("<FocusIn>", lambda e: refresh_photo_list())
 
 # 상태 표시 + 버전/날짜 (CLAUDE.md 규칙: 하단 필수 표기)
-status_var = tk.StringVar(value="준비됨")
+status_var = tk.StringVar(value=f"양식: {settings.get_active_name()}")
 tk.Label(root, textvariable=status_var,
          font=(FONT, 8), fg=MUTED, bg=BG).pack(pady=(6, 0))
 tk.Label(root, text=f"v{VERSION} · {RELEASE_DATE}",

@@ -1,0 +1,240 @@
+# -*- coding: utf-8 -*-
+"""양식 프리셋 저장소.
+
+- 표/박스/글꼴의 모든 스펙을 코드에 하드코딩하지 않고 여기서 관리한다.
+- 이름별 프리셋(예: '대왕중 2단', '1단 모의고사')을 config.json에 저장하고
+  드롭다운으로 전환한다. 프리셋은 JSON으로 내보내/가져와 다른 사람과 공유한다.
+- config.json은 사용자 로컬 파일(.gitignore). 기본 프리셋은 이 파일의
+  DEFAULT_SPEC/기본 프리셋으로 코드에 내장돼, 새 설치에서도 바로 쓸 수 있다.
+"""
+
+import copy
+import json
+import pathlib
+
+CONFIG_PATH = pathlib.Path(__file__).parent / "config.json"
+
+# ── 기본 스펙 ──────────────────────────────────────────
+# 모든 값의 단위: *_mm = 밀리미터, *_pt = 포인트,
+# line_spacing = 퍼센트(%), spacing/indentation = 한글 내부 단위
+DEFAULT_SPEC = {
+    "layout": {
+        "column_width_mm": 93.99,   # 전체 단 폭. 2단=93.99, 1단이면 ~155
+    },
+    "font": {
+        "apply": False,             # True면 삽입 텍스트에 아래 글꼴 강제 적용
+        "name": "함초롬바탕",
+        "size_pt": 10.0,
+    },
+    "material_box": {               # 자료: (기본형 자료박스)
+        "row1_height_mm": 45.0,     # 내용 칸
+        "row2_height_mm": 5.0,      # 아래 여백 칸
+    },
+    "photo_box": {                  # 사진자료:
+        "row1_height_mm": 45.0,
+        "row2_height_mm": 7.0,
+    },
+    "experiment_box": {             # 실험자료:
+        "height_mm": 80.0,
+        "label": "[실험 과정]",
+    },
+    "bogi_box": {                   # 보기: 〈보 기〉 박스
+        "title_height_mm": 3.0,     # 1행 (제목 위 칸)
+        "gap_height_mm": 3.0,       # 2행 (제목 아래 칸)
+        "content_height_mm": 20.0,  # 3행 (ㄱㄴㄷ 내용 칸)
+        "title": "〈보 기〉",
+        "line_spacing": 130,        # 내용 줄간격 %
+        "cell_margin_left_mm": 2.0,
+        "cell_margin_right_mm": 2.0,
+        "cell_margin_top_mm": 0.5,
+        "cell_margin_bottom_mm": 4.0,
+    },
+    "choices": {                    # 선지 표
+        "row_height_mm": 6.0,
+    },
+    "stem": {                       # 발문
+        "indentation": -399,        # 내어쓰기(음수, 한글 단위)
+        "line_spacing": 150,
+    },
+    "question": {                   # 질문(들여쓴 질문 문단)
+        "prev_spacing": 800,        # 위 간격
+        "next_spacing": 400,        # 아래 간격
+    },
+    "border": {                     # 테두리 종류 (None/Solid/Dash/Double)
+        "material_type": "None",    # 자료박스 (기본: 투명)
+        "bogi_type": "Solid",       # 보기박스 바깥선
+        "experiment_type": "Solid", # 실험박스
+    },
+}
+
+
+def default_spec():
+    return copy.deepcopy(DEFAULT_SPEC)
+
+
+def _default_profiles():
+    """새 설치에 심어줄 기본 프리셋 2종 (2단/1단)."""
+    two = default_spec()
+    one = default_spec()
+    one["layout"]["column_width_mm"] = 155.0   # 1단은 폭만 넓힘
+    return {"기본 (2단)": two, "기본 (1단)": one}
+
+
+# ── deep merge (하위호환: 저장된 프리셋에 새 키를 기본값으로 채움) ──
+def deep_merge(base, override):
+    """base(기본값) 위에 override(저장값)를 덮되, base에만 있는 키는 유지."""
+    result = copy.deepcopy(base)
+    for k, v in (override or {}).items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = deep_merge(result[k], v)
+        else:
+            result[k] = copy.deepcopy(v)
+    return result
+
+
+# ── config.json 입출력 ─────────────────────────────────
+def load_config():
+    try:
+        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_config(cfg):
+    try:
+        CONFIG_PATH.write_text(
+            json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _ensure_profiles(cfg):
+    """cfg에 profiles/active_profile이 없으면 기본값으로 채우고 저장."""
+    changed = False
+    if not cfg.get("profiles"):
+        cfg["profiles"] = _default_profiles()
+        changed = True
+    if cfg.get("active_profile") not in cfg["profiles"]:
+        cfg["active_profile"] = next(iter(cfg["profiles"]))
+        changed = True
+    if changed:
+        save_config(cfg)
+    return cfg
+
+
+# ── 프리셋 API ─────────────────────────────────────────
+def list_profiles():
+    cfg = _ensure_profiles(load_config())
+    return list(cfg["profiles"].keys())
+
+
+def get_active_name():
+    cfg = _ensure_profiles(load_config())
+    return cfg["active_profile"]
+
+
+def set_active_name(name):
+    cfg = _ensure_profiles(load_config())
+    if name in cfg["profiles"]:
+        cfg["active_profile"] = name
+        save_config(cfg)
+
+
+def get_spec(name=None):
+    """이름(없으면 활성) 프리셋을 기본값과 병합해 완전한 스펙으로 반환."""
+    cfg = _ensure_profiles(load_config())
+    if name is None:
+        name = cfg["active_profile"]
+    saved = cfg["profiles"].get(name, {})
+    return deep_merge(DEFAULT_SPEC, saved)
+
+
+def get_active_spec():
+    return get_spec(None)
+
+
+def save_profile(name, spec):
+    cfg = _ensure_profiles(load_config())
+    cfg["profiles"][name] = copy.deepcopy(spec)
+    save_config(cfg)
+
+
+def add_profile(name, spec=None):
+    cfg = _ensure_profiles(load_config())
+    if name in cfg["profiles"]:
+        raise ValueError(f"이미 존재하는 이름입니다: {name}")
+    cfg["profiles"][name] = spec if spec is not None else default_spec()
+    cfg["active_profile"] = name
+    save_config(cfg)
+
+
+def duplicate_profile(src, new_name):
+    cfg = _ensure_profiles(load_config())
+    if src not in cfg["profiles"]:
+        raise ValueError(f"원본 프리셋이 없습니다: {src}")
+    if new_name in cfg["profiles"]:
+        raise ValueError(f"이미 존재하는 이름입니다: {new_name}")
+    cfg["profiles"][new_name] = copy.deepcopy(cfg["profiles"][src])
+    cfg["active_profile"] = new_name
+    save_config(cfg)
+
+
+def rename_profile(old, new):
+    cfg = _ensure_profiles(load_config())
+    if old not in cfg["profiles"]:
+        raise ValueError(f"프리셋이 없습니다: {old}")
+    if new in cfg["profiles"] and new != old:
+        raise ValueError(f"이미 존재하는 이름입니다: {new}")
+    # 순서 유지하며 키 교체
+    cfg["profiles"] = {(new if k == old else k): v
+                       for k, v in cfg["profiles"].items()}
+    if cfg.get("active_profile") == old:
+        cfg["active_profile"] = new
+    save_config(cfg)
+
+
+def delete_profile(name):
+    cfg = _ensure_profiles(load_config())
+    if name not in cfg["profiles"]:
+        return
+    if len(cfg["profiles"]) <= 1:
+        raise ValueError("마지막 프리셋은 삭제할 수 없습니다.")
+    del cfg["profiles"][name]
+    if cfg.get("active_profile") == name:
+        cfg["active_profile"] = next(iter(cfg["profiles"]))
+    save_config(cfg)
+
+
+def export_profile(name, path):
+    """프리셋 한 개를 {name, spec} 형태의 JSON 파일로 저장."""
+    spec = get_spec(name)
+    payload = {"exam_scribe_profile": name, "spec": spec}
+    pathlib.Path(path).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def import_profile(path, new_name=None):
+    """내보낸 JSON 파일을 프리셋으로 가져옴. 반환: 실제 저장된 이름."""
+    payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+    spec = payload.get("spec", payload)          # 순수 spec만 든 파일도 허용
+    name = new_name or payload.get("exam_scribe_profile") or "가져온 양식"
+    cfg = _ensure_profiles(load_config())
+    # 이름 충돌 시 (2), (3)… 붙임
+    base, n = name, 2
+    while name in cfg["profiles"]:
+        name = f"{base} ({n})"; n += 1
+    cfg["profiles"][name] = deep_merge(DEFAULT_SPEC, spec)
+    cfg["active_profile"] = name
+    save_config(cfg)
+    return name
+
+
+# ── 기타 설정(사진 폴더 등) ────────────────────────────
+def get_config_value(key, default=None):
+    return load_config().get(key, default)
+
+
+def set_config_value(key, value):
+    cfg = load_config()
+    cfg[key] = value
+    save_config(cfg)
