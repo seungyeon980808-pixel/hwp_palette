@@ -165,9 +165,28 @@ class SettingsWindow(tk.Toplevel):
                 lf.pack(fill="x", pady=(0, 8))
                 lf.grid_columnconfigure(1, weight=1)
                 groups[group] = [lf, 0]
+                # 보기박스 그룹 상단에 '시각 편집' 진입 버튼
+                if group == "보기박스":
+                    tk.Button(lf, text="🖼 도식 보며 편집",
+                              command=self._open_bogi_visual,
+                              font=("맑은 고딕", 9, "bold"), bg="#0071e3", fg="white",
+                              bd=0, padx=10, pady=4, cursor="hand2").grid(
+                              row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+                    groups[group][1] = 1
             lf, r = groups[group]
             self._add_field(lf, r, path, label, ftype)
             groups[group][1] = r + 1
+
+    def _open_bogi_visual(self):
+        import bogi_visual_ui
+
+        def after_saved():
+            # 시각 편집에서 저장 → 폼도 새 값으로 갱신 + 상위 콜백 전달
+            self.spec = settings.get_spec(self.current_name)
+            self._load_into_form()
+            self._notify_saved()
+
+        bogi_visual_ui.open_editor(self, on_saved=after_saved)
 
     def _add_field(self, parent, row, path, label, ftype):
         key = tuple(path)
