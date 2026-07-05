@@ -22,16 +22,16 @@ FIELD_SPEC = [
     ("글꼴",     ["font", "name"],    "글꼴", "font"),
     ("글꼴",     ["font", "size_pt"], "글자 크기 (pt)", "float"),
 
-    ("자료박스", ["material_box", "row1_height_mm"], "내용 칸 높이 (mm)", "float"),
+    ("자료박스", ["material_box", "row1_height_mm"], "내용 칸 최소 높이 (mm)", "float"),
     ("자료박스", ["material_box", "row2_height_mm"], "아래 여백 (mm)", "float"),
 
-    ("사진박스", ["photo_box", "row1_height_mm"], "내용 칸 높이 (mm)", "float"),
+    ("사진박스", ["photo_box", "row1_height_mm"], "내용 칸 최소 높이 (mm)", "float"),
     ("사진박스", ["photo_box", "row2_height_mm"], "아래 여백 (mm)", "float"),
 
-    ("실험박스", ["experiment_box", "height_mm"], "높이 (mm)", "float"),
+    ("실험박스", ["experiment_box", "height_mm"], "최소 높이 (mm)", "float"),
     ("실험박스", ["experiment_box", "label"],     "안내 문구", "str"),
 
-    ("보기박스", ["bogi_box", "content_height_mm"],  "내용 칸 높이 (mm)", "float"),
+    ("보기박스", ["bogi_box", "content_height_mm"],  "내용 칸 최소 높이 (mm)", "float"),
     ("보기박스", ["bogi_box", "title"],             "제목", "str"),
     ("보기박스", ["bogi_box", "line_spacing"],      "줄간격 (%)", "int"),
     ("보기박스", ["bogi_box", "cell_margin_left_mm"],   "셀 왼쪽 여백 (mm)", "float"),
@@ -41,7 +41,7 @@ FIELD_SPEC = [
     ("보기박스", ["bogi_box", "title_height_mm"], "제목 위 칸 높이 (mm)", "float"),
     ("보기박스", ["bogi_box", "gap_height_mm"],   "제목 아래 칸 높이 (mm)", "float"),
 
-    ("선지",     ["choices", "row_height_mm"], "행 높이 (mm)", "float"),
+    ("선지",     ["choices", "row_height_mm"], "행 최소 높이 (mm)", "float"),
 
     ("발문",     ["stem", "indentation"],  "내어쓰기 (음수, 한글 단위)", "int"),
     ("발문",     ["stem", "line_spacing"], "줄간격 (%)", "int"),
@@ -147,6 +147,13 @@ class SettingsWindow(tk.Toplevel):
         canvas.bind_all("<MouseWheel>",
                         lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
         self._canvas = canvas
+
+        # 높이 동작 안내 (한글 표의 행 높이는 '최소값'으로만 동작)
+        tk.Label(self.form,
+                 text="※ 높이는 '최소 높이'입니다. 내용 줄 수·줄간격·셀 여백이\n"
+                      "   만드는 높이보다 작게는 줄어들지 않습니다.",
+                 font=("맑은 고딕", 8), bg="#f5f5f7", fg="#86868b",
+                 justify="left").pack(anchor="w", pady=(0, 6))
 
         # 그룹별로 LabelFrame 만들고 필드 배치
         groups = {}

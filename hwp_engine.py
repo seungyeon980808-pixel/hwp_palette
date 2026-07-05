@@ -167,27 +167,53 @@ def _set_cell_border(act, ps, top, bottom, left, right):
 
 
 def _exit_table(act):
-    act.Run("CloseEx")
-    act.Run("MoveDown")
-    act.Run("MoveLineEnd")
+    """표 편집 상태에서 확실히 본문으로 빠져나온다.
+
+    주의: 셀 병합(TableMergeCell) 직후처럼 '셀 선택' 상태에서 CloseEx는 표 밖으로
+    나가지 않고 선택만 해제한다(실측 2026-07-05 — 이때 다음 표가 셀 안에 중첩되던
+    버그의 원인). Cancel로 선택을 먼저 풀고, 본문(list 0)에 도달할 때까지 CloseEx.
+    """
+    act.Run("Cancel")               # 셀 선택 상태 해제
+    for _ in range(8):              # 중첩 깊이 안전 한도
+        try:
+            if hwp.GetPos()[0] == 0:   # list 0 = 본문
+                break
+        except Exception:
+            break
+        act.Run("CloseEx")
+    # 본문 도달 시 커서는 표 앵커 앞 — MoveDown은 표 '첫 셀로 들어가는' 키라
+    # 쓰면 안 되고(실측), MoveRight로 앵커 글자를 건너뛰어 표 뒤로 나온다.
+    act.Run("MoveRight")
+
+
+# 표 생성 시 열마다 붙는 셀 좌우 안여백(1.8mm×2) — 실측 보정값(2026-07-05)
+_CELL_SIDE_MARGIN_MM = 3.6
 
 
 def _create_table(rows, cols, total_mm, row_heights_mm):
-    """rows×cols 표 생성. 열은 total_mm를 균등 분할(단 폭 하나에서 자동 계산)."""
+    """rows×cols 표 생성. 완성된 표의 전체 폭이 total_mm가 되도록 열을 균등 분할.
+
+    실측(2026-07-05):
+    - WidthType: 0=단에 맞춤, 1=문단에 맞춤 → 지정 너비 무시. 2=임의 값이어야 반영.
+    - ColWidth는 셀 '내용' 폭 기준이라, 완성 폭 = Σ(ColWidth + 3.6mm). 열마다
+      셀 좌우 안여백만큼 빼서 지정해야 전체 폭이 total_mm에 맞는다.
+    - RowHeight는 '최소 높이' — 내용·줄간격·셀 여백이 크면 그만큼 늘어난다.
+    """
     act = hwp.HAction
     ps  = hwp.HParameterSet
     act.GetDefault("TableCreate", ps.HTableCreation.HSet)
     ps.HTableCreation.Rows       = rows
     ps.HTableCreation.Cols       = cols
-    ps.HTableCreation.WidthType  = 0
+    ps.HTableCreation.WidthType  = 2
     ps.HTableCreation.HeightType = 1
     ps.HTableCreation.WidthValue = _mm(total_mm)
     ps.HTableCreation.CreateItemArray("ColWidth", cols)
-    # 균등 분할하되 반올림 오차를 마지막 칸에서 흡수
-    each = total_mm / cols
+    # 열 내용 폭 = 전체 폭/열 수 - 셀 좌우 여백 (반올림 오차는 마지막 칸에서 흡수)
+    content_total = total_mm - cols * _CELL_SIDE_MARGIN_MM
+    each = max(content_total / cols, 1.0)
     acc = 0.0
     for i in range(cols):
-        w = (total_mm - acc) if i == cols - 1 else each
+        w = max(content_total - acc, 1.0) if i == cols - 1 else each
         ps.HTableCreation.ColWidth.SetItem(i, _mm(w))
         acc += each
     ps.HTableCreation.CreateItemArray("RowHeight", rows)
