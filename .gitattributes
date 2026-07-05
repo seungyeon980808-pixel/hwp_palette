@@ -1,0 +1,5 @@
+# 배치 파일은 항상 CRLF 줄바꿈 유지 (한국어 Windows cmd 파싱 호환)
+*.bat text eol=crlf
+
+# 파이썬 소스는 LF로 통일
+*.py text eol=lf
