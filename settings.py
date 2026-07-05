@@ -238,3 +238,24 @@ def set_config_value(key, value):
     cfg = load_config()
     cfg[key] = value
     save_config(cfg)
+
+
+# ── 빠른 입력 버튼 (전역, 프리셋과 무관한 개인 기호 도구) ──
+# 5칸 그리드 기준 플랫 리스트. "" = 빈 칸(버튼 없음).
+QUICK_COLS = 5
+DEFAULT_QUICK_BUTTONS = [
+    "Ω", "→", "℃", "·", "×",
+    "±", "≒", "≠", "≤", "≥",
+    "√", "∴", "½", "²", "³",
+    "₁", "₂", "α", "β", "γ",
+    "θ", "λ", "μ", "π", "Δ",
+]
+
+
+def get_quick_buttons():
+    v = get_config_value("quick_buttons", None)
+    return list(v) if v is not None else list(DEFAULT_QUICK_BUTTONS)
+
+
+def save_quick_buttons(items):
+    set_config_value("quick_buttons", list(items))

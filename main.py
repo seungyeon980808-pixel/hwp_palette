@@ -5,6 +5,11 @@
 
 버전 정보
 ─────────────────────────────────────────
+v1.2.0 (2026-07-05)
+  [기능 추가] 빠른 입력 버튼 편집 — 원하는 칸에 유니코드 기호를 넣어 버튼 생성
+  - quickbuttons_ui.py(편집 창) 추가, 저장은 전역 config(프리셋과 무관)
+  - 기호 직접 붙여넣기 또는 U+2126 형식 코드포인트 입력 지원
+  - 과학 교사용 기본 기호(Ω → ℃ ± ² ₁ α β Δ …) 시드
 v1.1.0 (2026-07-05)
   [기능 추가] 양식 프리셋 — 표/박스/글꼴의 모든 스펙을 프로그램 안에서 수정
   - settings.py(프리셋 저장소) / settings_ui.py(설정 창) 추가
@@ -19,7 +24,7 @@ v1.0.0 (2026-07-05)
 ─────────────────────────────────────────
 """
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 RELEASE_DATE = "2026-07-05"
 
 import pathlib
@@ -31,6 +36,7 @@ import parser as md_parser
 import hwp_engine
 import settings
 import settings_ui
+import quickbuttons_ui
 
 # 설정 파일 입출력은 settings 모듈로 통합
 load_config = settings.load_config
@@ -221,6 +227,16 @@ def insert_char(ch):
                 hwp_engine.insert_marked_choice(ch, selected)
                 return
         hwp_engine.insert_plain(ch)
+    except Exception as e:
+        status_var.set(f"오류: {e}")
+
+
+def insert_quick(s):
+    """빠른 입력 버튼 — 기호를 그대로 삽입 (현재 문서 서식 유지)."""
+    if not ensure_hwp(): return
+    try:
+        hwp_engine.insert_plain(s)
+        status_var.set(f"삽입: {s}")
     except Exception as e:
         status_var.set(f"오류: {e}")
 
@@ -444,6 +460,51 @@ for row_chars in [["①","②","③","④","⑤"],
                   font=(FONT, 11), fg=TEXT, bg=CARD,
                   activebackground=BORDER, bd=0, pady=4,
                   cursor="hand2", width=4).pack(side="left", padx=2)
+
+# 빠른 입력 (사용자 편집 가능)
+tk.Frame(root, bg=BORDER, height=1).pack(fill="x", padx=14, pady=(8, 0))
+quick_head = tk.Frame(root, bg=BG, padx=14, pady=8)
+quick_head.pack(fill="x", pady=(8, 0))
+tk.Label(quick_head, text="빠른 입력", font=(FONT, 8), fg=MUTED, bg=BG).pack(side="left")
+tk.Button(quick_head, text="✏ 편집", command=lambda: fn_open_quick_editor(),
+          font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
+          bd=0, padx=8, pady=2, cursor="hand2").pack(side="right")
+
+quick_area = tk.Frame(root, bg=BG, padx=14, pady=4)
+quick_area.pack(fill="x", pady=(0, 4))
+
+def render_quick_buttons():
+    for w in quick_area.winfo_children():
+        w.destroy()
+    items = settings.get_quick_buttons()
+    last = -1
+    for i, v in enumerate(items):
+        if v.strip():
+            last = i
+    if last < 0:
+        tk.Label(quick_area, text="‘✏ 편집’으로 기호를 추가하세요",
+                 font=(FONT, 8), fg=MUTED, bg=BG).pack(anchor="w")
+        return
+    cols = settings.QUICK_COLS
+    for r in range((last // cols) + 1):
+        row = tk.Frame(quick_area, bg=BG)
+        row.pack(fill="x", pady=1)
+        for c in range(cols):
+            idx = r * cols + c
+            ch = items[idx] if idx < len(items) else ""
+            if ch.strip():
+                tk.Button(row, text=ch,
+                          command=lambda s=ch: insert_quick(s),
+                          font=(FONT, 11), fg=TEXT, bg=CARD,
+                          activebackground=BORDER, bd=0, pady=4,
+                          cursor="hand2", width=4).pack(side="left", padx=2)
+            else:
+                tk.Label(row, text="", width=4, bg=BG).pack(side="left", padx=2)
+
+def fn_open_quick_editor():
+    quickbuttons_ui.open_editor(root, on_saved=render_quick_buttons)
+
+render_quick_buttons()
 
 # 사진 삽입
 tk.Frame(root, bg=BORDER, height=1).pack(fill="x", padx=14, pady=(8, 0))
