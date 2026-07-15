@@ -1,0 +1,533 @@
+# -*- coding: utf-8 -*-
+"""개인 라이브러리 관리 창 (Toplevel) — 서식 / 문자 / 템플릿 3탭.
+
+각 탭은 독립적으로 "+추가"가 가능하다.
+- 서식: 한글에서 원하는 모양으로 글자를 선택해두고 [+ 캡처해서 추가] →
+  체크한 항목만 델타로 저장. 이후 [적용]은 선택 영역에 그 항목만 입힌다.
+- 문자: 문구를 직접 입력(또는 한글 선택 영역에서 자동 채움)해 이름 붙여 저장.
+  [삽입]으로 커서 위치에 그대로 삽입.
+- 템플릿: 한글에서 표·결재란 등 영역을 선택해두고 [+ 선택 영역을 템플릿으로
+  저장] → 통째로 조각 .hwp 파일로 보관. [삽입]으로 커서 위치에 그대로 삽입.
+"""
+
+import pathlib
+import time
+import tkinter as tk
+from tkinter import messagebox, ttk
+
+import hwp_engine
+import library
+import builtin_chars
+
+BG = "#f5f5f7"
+CARD = "#ffffff"
+ACCENT = "#0071e3"
+TEXT = "#1d1d1f"
+MUTED = "#86868b"
+BORDER = "#d2d2d7"
+ROWBG = "#fafafa"
+FONT = "맑은 고딕"
+
+TAB_DESC = {
+    "서식": "굵기·색상·자간 등 글자 서식 일부만 저장해 아무 글자에나 입히는 기능",
+    "문자": "특수문자나 자주 쓰는 문구를 저장해 바로 삽입하는 기능",
+    "템플릿": "표·결재란처럼 완성된 덩어리를 통째로 저장해 그대로 꽂아 넣는 기능",
+    "내장": "등록 없이 바로 쓰는 기본 기호. 문서에 \\원1\\ \\로마3\\ \\홑낫표\\ 로 호출",
+}
+
+TABS = ("서식", "문자", "템플릿", "내장")
+
+
+def _ensure_hwp(parent):
+    try:
+        hwp_engine.connect()
+        return True
+    except Exception as e:
+        messagebox.showerror("연결 실패", f"한글을 먼저 실행해주세요.\n{e}", parent=parent)
+        return False
+
+
+class StyleFieldDialog(tk.Toplevel):
+    """서식 캡처 시 '체크한 항목만' 담기 위한 체크리스트."""
+
+    def __init__(self, master):
+        super().__init__(master)
+        self.result = None
+        self.title("캡처할 항목 선택")
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+
+        tk.Label(self, text="선택 영역에서 어떤 항목을 저장할까요?",
+                 font=(FONT, 10, "bold"), bg=BG, fg=TEXT).pack(
+                 anchor="w", padx=16, pady=(14, 2))
+        tk.Label(self, text="체크한 항목만 저장돼, 나중에 그 항목만 다른 글자에 입혀집니다.",
+                 font=(FONT, 8), bg=BG, fg=MUTED).pack(anchor="w", padx=16, pady=(0, 10))
+
+        self.vars = {}
+        body = tk.Frame(self, bg=BG, padx=16)
+        body.pack(fill="x")
+        for label in hwp_engine.CHARSHAPE_FIELD_LABELS:
+            v = tk.BooleanVar(value=False)
+            self.vars[label] = v
+            tk.Checkbutton(body, text=label, variable=v, font=(FONT, 10),
+                           bg=BG, fg=TEXT, activebackground=BG,
+                           selectcolor=CARD, cursor="hand2").pack(anchor="w", pady=2)
+
+        foot = tk.Frame(self, bg=BG, padx=16, pady=14)
+        foot.pack(fill="x")
+        tk.Button(foot, text="다음", command=self._ok,
+                  font=(FONT, 10, "bold"), bg=ACCENT, fg="white", bd=0,
+                  padx=16, pady=6, cursor="hand2").pack(side="right")
+        tk.Button(foot, text="취소", command=self.destroy,
+                  font=(FONT, 10), bg="#e8e8ed", fg=TEXT, bd=0,
+                  padx=16, pady=6, cursor="hand2").pack(side="right", padx=(0, 6))
+
+        self.update_idletasks()
+        self.geometry(f"+{master.winfo_rootx()+40}+{master.winfo_rooty()+40}")
+        self.grab_set()
+
+    def _ok(self):
+        checked = [k for k, v in self.vars.items() if v.get()]
+        if not checked:
+            messagebox.showwarning("선택 없음", "하나 이상 체크해주세요.", parent=self)
+            return
+        self.result = checked
+        self.destroy()
+
+
+class MetaDialog(tk.Toplevel):
+    """이름 / 마크다운 라벨 / 분류를 한 창에서 입력."""
+
+    def __init__(self, master, title="등록 정보", name="", label="", extra_note=""):
+        super().__init__(master)
+        self.result = None
+        self.title(title)
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+
+        body = tk.Frame(self, bg=BG, padx=16, pady=12)
+        body.pack(fill="x")
+
+        tk.Label(body, text="이름", font=(FONT, 9), bg=BG, fg=TEXT).grid(
+            row=0, column=0, sticky="w", pady=3)
+        self.name_var = tk.StringVar(value=name)
+        tk.Entry(body, textvariable=self.name_var, width=26, font=(FONT, 10),
+                 relief="solid", bd=1).grid(row=0, column=1, pady=3, padx=(8, 0))
+
+        tk.Label(body, text="마크다운 라벨", font=(FONT, 9), bg=BG, fg=TEXT).grid(
+            row=1, column=0, sticky="w", pady=3)
+        self.label_var = tk.StringVar(value=label)
+        tk.Entry(body, textvariable=self.label_var, width=26, font=(FONT, 10),
+                 relief="solid", bd=1).grid(row=1, column=1, pady=3, padx=(8, 0))
+        tk.Label(body, text=r"문서에 \라벨\ 로 쓰면 변환 시 이 항목이 들어갑니다."
+                            " 비우면 이름을 사용.",
+                 font=(FONT, 7), bg=BG, fg=MUTED, wraplength=250,
+                 justify="left").grid(row=2, column=1, sticky="w", padx=(8, 0))
+
+        tk.Label(body, text="분류", font=(FONT, 9), bg=BG, fg=TEXT).grid(
+            row=3, column=0, sticky="w", pady=3)
+        self.group_var = tk.StringVar(value=library.DEFAULT_GROUP)
+        ttk.Combobox(body, textvariable=self.group_var, width=23,
+                     values=library.list_groups(), font=(FONT, 10)).grid(
+            row=3, column=1, pady=3, padx=(8, 0))
+
+        if extra_note:
+            tk.Label(body, text=extra_note, font=(FONT, 8), bg=BG, fg=ACCENT,
+                     wraplength=300, justify="left").grid(
+                row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        foot = tk.Frame(self, bg=BG, padx=16, pady=12)
+        foot.pack(fill="x")
+        tk.Button(foot, text="저장", command=self._ok,
+                  font=(FONT, 10, "bold"), bg=ACCENT, fg="white", bd=0,
+                  padx=16, pady=6, cursor="hand2").pack(side="right")
+        tk.Button(foot, text="취소", command=self.destroy,
+                  font=(FONT, 10), bg="#e8e8ed", fg=TEXT, bd=0,
+                  padx=16, pady=6, cursor="hand2").pack(side="right", padx=(0, 6))
+
+        self.update_idletasks()
+        self.geometry(f"+{master.winfo_rootx()+40}+{master.winfo_rooty()+60}")
+        self.grab_set()
+
+    def _ok(self):
+        name = self.name_var.get().strip()
+        if not name:
+            messagebox.showwarning("이름 없음", "이름을 입력해주세요.", parent=self)
+            return
+        self.result = (name, self.label_var.get().strip() or name,
+                       self.group_var.get().strip() or library.DEFAULT_GROUP)
+        self.destroy()
+
+
+class TextInputDialog(tk.Toplevel):
+    """문자/문구 등록 입력창."""
+
+    def __init__(self, master, prefill=""):
+        super().__init__(master)
+        self.result = None
+        self.title("문자/문구 내용")
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+
+        tk.Label(self, text="저장할 내용을 입력하세요 (한글에서 선택했다면 자동으로 채워집니다)",
+                 font=(FONT, 9), bg=BG, fg=MUTED, justify="left").pack(
+                 anchor="w", padx=16, pady=(14, 6))
+
+        self.text = tk.Text(self, width=44, height=5, font=(FONT, 10),
+                             wrap="word", relief="solid", bd=1)
+        self.text.pack(padx=16)
+        self.text.insert("1.0", prefill)
+
+        foot = tk.Frame(self, bg=BG, padx=16, pady=14)
+        foot.pack(fill="x")
+        tk.Button(foot, text="다음", command=self._ok,
+                  font=(FONT, 10, "bold"), bg=ACCENT, fg="white", bd=0,
+                  padx=16, pady=6, cursor="hand2").pack(side="right")
+        tk.Button(foot, text="취소", command=self.destroy,
+                  font=(FONT, 10), bg="#e8e8ed", fg=TEXT, bd=0,
+                  padx=16, pady=6, cursor="hand2").pack(side="right", padx=(0, 6))
+
+        self.update_idletasks()
+        self.geometry(f"+{master.winfo_rootx()+40}+{master.winfo_rooty()+40}")
+        self.grab_set()
+
+    def _ok(self):
+        self.result = self.text.get("1.0", "end-1c")
+        self.destroy()
+
+
+class LibraryManager(tk.Toplevel):
+    def __init__(self, master, on_saved=None):
+        super().__init__(master)
+        self.on_saved = on_saved
+        self.title("내 라이브러리")
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self.current_cat = "서식"
+
+        tk.Label(self, text="내 라이브러리", font=(FONT, 12, "bold"),
+                 bg=BG, fg=TEXT).pack(anchor="w", padx=16, pady=(14, 2))
+
+        # 탭 버튼
+        tab_row = tk.Frame(self, bg=BG, padx=16)
+        tab_row.pack(fill="x", pady=(4, 0))
+        self.tab_btns = {}
+        for cat in TABS:
+            b = tk.Button(tab_row, text=cat, font=(FONT, 10, "bold"),
+                          bd=0, padx=14, pady=8, cursor="hand2",
+                          command=lambda c=cat: self._switch_tab(c))
+            b.pack(side="left", padx=(0, 4))
+            self.tab_btns[cat] = b
+
+        self.desc_label = tk.Label(self, font=(FONT, 8), bg=BG, fg=MUTED,
+                                    justify="left", wraplength=420)
+        self.desc_label.pack(anchor="w", padx=16, pady=(6, 8))
+
+        # 검색 + 분류 필터
+        filter_row = tk.Frame(self, bg=BG, padx=16)
+        filter_row.pack(fill="x")
+        tk.Label(filter_row, text="검색", font=(FONT, 8), fg=MUTED, bg=BG).pack(side="left")
+        self.search_var = tk.StringVar(value="")
+        se = tk.Entry(filter_row, textvariable=self.search_var, width=14,
+                      font=(FONT, 9), relief="solid", bd=1)
+        se.pack(side="left", padx=(6, 12))
+        self.search_var.trace_add("write", lambda *a: self._refresh())
+        self.group_lbl = tk.Label(filter_row, text="분류", font=(FONT, 8),
+                                   fg=MUTED, bg=BG)
+        self.group_lbl.pack(side="left")
+        self.group_filter = tk.StringVar(value="전체")
+        self.group_combo = ttk.Combobox(filter_row, textvariable=self.group_filter,
+                                        width=14, state="readonly", font=(FONT, 9))
+        self.group_combo.pack(side="left", padx=(6, 0))
+        self.group_combo.bind("<<ComboboxSelected>>",
+                              lambda e: self._refresh())
+
+        # 추가 버튼(탭마다 동작이 다름)
+        self.add_btn = tk.Button(self, font=(FONT, 9, "bold"), bg="#e8e8ed",
+                                  fg=TEXT, bd=0, padx=10, pady=8, cursor="hand2")
+        self.add_btn.pack(fill="x", padx=16)
+
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x", padx=16, pady=(10, 6))
+
+        self.list_area = tk.Frame(self, bg=BG, padx=16)
+        self.list_area.pack(fill="both", expand=True, pady=(0, 14))
+
+        self._switch_tab("서식")
+        self.update_idletasks()
+        self.geometry(f"+{master.winfo_rootx()-320}+{master.winfo_rooty()}")
+
+    # ── 탭 전환 ──────────────────────────────────────
+    def _switch_tab(self, cat):
+        self.current_cat = cat
+        for c, b in self.tab_btns.items():
+            active = c == cat
+            b.config(bg=ACCENT if active else CARD, fg="white" if active else TEXT)
+        self.desc_label.config(text=TAB_DESC[cat])
+        if cat == "서식":
+            self.add_btn.config(text="+ 지금 선택한 글자에서 캡처해서 추가",
+                                 command=self._add_style)
+            self.add_btn.pack(fill="x", padx=16)
+        elif cat == "문자":
+            self.add_btn.config(text="+ 새 문자/문구 추가",
+                                 command=self._add_char)
+            self.add_btn.pack(fill="x", padx=16)
+        elif cat == "템플릿":
+            self.add_btn.config(text="+ 지금 선택 영역을 템플릿으로 저장",
+                                 command=self._add_template)
+            self.add_btn.pack(fill="x", padx=16)
+        else:  # 내장 — 추가 불가(읽기 전용)
+            self.add_btn.pack_forget()
+        # 내장 탭은 분류 필터 대신 검색만 사용
+        show_group = cat != "내장"
+        if show_group:
+            self.group_lbl.pack(side="left")
+            self.group_combo.pack(side="left", padx=(6, 0))
+        else:
+            self.group_lbl.pack_forget()
+            self.group_combo.pack_forget()
+        self._refresh(cat)
+
+    def _refresh(self, cat=None):
+        cat = cat or self.current_cat
+        for w in self.list_area.winfo_children():
+            w.destroy()
+        query = self.search_var.get().strip()
+
+        if cat == "내장":
+            results = builtin_chars.search(query)
+            if not results:
+                tk.Label(self.list_area, text="검색 결과가 없습니다.",
+                         font=(FONT, 9), bg=BG, fg=MUTED).pack(anchor="w", pady=8)
+                return
+            for label, text, group in results[:200]:
+                self._render_builtin_row(label, text, group)
+            if len(results) > 200:
+                tk.Label(self.list_area,
+                         text=f"…외 {len(results)-200}개 (검색으로 좁혀주세요)",
+                         font=(FONT, 8), bg=BG, fg=MUTED).pack(anchor="w", pady=4)
+            return
+
+        # 분류 콤보 갱신 (선택 유지)
+        groups = ["전체"] + library.list_groups()
+        cur = self.group_filter.get()
+        self.group_combo["values"] = groups
+        if cur not in groups:
+            self.group_filter.set("전체")
+            cur = "전체"
+        items = library.list_items(cat)
+        if cur != "전체":
+            items = [it for it in items
+                     if (it.get("group") or library.DEFAULT_GROUP) == cur]
+        if query:
+            ql = query.lower()
+            items = [it for it in items if ql in self._search_blob(cat, it)]
+        if not items:
+            tk.Label(self.list_area, text="해당하는 항목이 없습니다.",
+                     font=(FONT, 9), bg=BG, fg=MUTED).pack(anchor="w", pady=8)
+            return
+        for item in items:
+            self._render_row(cat, item)
+
+    def _search_blob(self, cat, item):
+        parts = [item.get("name", ""), item.get("label", ""),
+                 item.get("group", "")]
+        if cat == "문자":
+            parts.append(item.get("text", ""))
+        return " ".join(parts).lower()
+
+    def _render_builtin_row(self, label, text, group):
+        row = tk.Frame(self.list_area, bg=ROWBG, highlightbackground=BORDER,
+                        highlightthickness=1)
+        row.pack(fill="x", pady=2)
+        info = tk.Frame(row, bg=ROWBG, padx=10, pady=5)
+        info.pack(side="left", fill="both", expand=True)
+        tk.Label(info, text=text, font=(FONT, 13), bg=ROWBG, fg=TEXT,
+                 anchor="w").pack(side="left")
+        tk.Label(info, text=f"  \\{label}\\  · {group}", font=(FONT, 8),
+                 bg=ROWBG, fg=MUTED, anchor="w").pack(side="left")
+        tk.Button(row, text="삽입", font=(FONT, 9), bg=ACCENT, fg="white",
+                  bd=0, padx=10, pady=5, cursor="hand2",
+                  command=lambda t=text: self._insert_builtin(t)).pack(
+                  side="right", padx=8)
+
+    def _insert_builtin(self, text):
+        if not _ensure_hwp(self):
+            return
+        try:
+            hwp_engine.insert_plain(text)
+        except Exception as e:
+            messagebox.showerror("오류", f"{type(e).__name__}: {e}", parent=self)
+
+    def _render_row(self, cat, item):
+        row = tk.Frame(self.list_area, bg=ROWBG, highlightbackground=BORDER,
+                        highlightthickness=1)
+        row.pack(fill="x", pady=3)
+        info = tk.Frame(row, bg=ROWBG, padx=10, pady=6)
+        info.pack(side="left", fill="both", expand=True)
+        if cat == "문자":
+            # 문자는 내용 자체를 제목으로 (그 문자 그대로 보이게)
+            t = item["text"].replace("\n", " ")
+            title = t if len(t) <= 16 else t[:16] + "…"
+            title_font = (FONT, 12)
+        else:
+            title = item["name"]
+            title_font = (FONT, 10, "bold")
+        tk.Label(info, text=title, font=title_font,
+                 bg=ROWBG, fg=TEXT, anchor="w").pack(anchor="w")
+        tk.Label(info, text=self._summary(cat, item), font=(FONT, 8),
+                 bg=ROWBG, fg=MUTED, anchor="w", wraplength=260,
+                 justify="left").pack(anchor="w")
+
+        btns = tk.Frame(row, bg=ROWBG, padx=8)
+        btns.pack(side="right")
+        action_label = "적용" if cat == "서식" else "삽입"
+        tk.Button(btns, text=action_label, font=(FONT, 9), bg=ACCENT, fg="white",
+                  bd=0, padx=10, pady=5, cursor="hand2",
+                  command=lambda: self._act(cat, item)).pack(side="left", padx=2)
+        tk.Button(btns, text="삭제", font=(FONT, 9), bg="#e8e8ed", fg=TEXT,
+                  bd=0, padx=10, pady=5, cursor="hand2",
+                  command=lambda: self._delete(cat, item["name"])).pack(side="left", padx=2)
+
+    def _summary(self, cat, item):
+        meta = f"\\{item.get('label', item['name'])}\\ · {item.get('group', library.DEFAULT_GROUP)}"
+        if cat == "서식":
+            fields = ", ".join(f"{k}:{v}" for k, v in item["fields"].items())
+            return f"{fields}  |  {meta}"
+        if cat == "문자":
+            return f"{item['name']}  |  {meta}"
+        slots = int(item.get("slot_count") or 0)
+        names = item.get("slot_names") or []
+        parts = []
+        if slots:
+            parts.append(f"순서 빈칸 {slots}")
+        if names:
+            parts.append(f"이름 빈칸 {len(names)}")
+        slot_txt = "·".join(parts) if parts else "빈칸 없음"
+        return f"{slot_txt}  |  {meta}"
+
+    # ── 서식 ─────────────────────────────────────────
+    def _add_style(self):
+        if not _ensure_hwp(self):
+            return
+        if not hwp_engine.has_selection():
+            messagebox.showwarning("선택 없음",
+                "한글에서 저장할 서식이 적용된 글자를 먼저 선택해주세요.", parent=self)
+            return
+        dlg = StyleFieldDialog(self)
+        self.wait_window(dlg)
+        if not dlg.result:
+            return
+        delta = hwp_engine.capture_charshape(dlg.result)
+        if not delta:
+            messagebox.showwarning("캡처 실패", "선택한 항목을 읽지 못했습니다.", parent=self)
+            return
+        meta = MetaDialog(self, title="서식 등록")
+        self.wait_window(meta)
+        if not meta.result:
+            return
+        name, label, group = meta.result
+        library.add_style(name, delta, label=label, group=group)
+        self._refresh("서식")
+        self._notify()
+
+    # ── 문자 ─────────────────────────────────────────
+    def _read_selected_text(self):
+        return hwp_engine.read_selection_text()
+
+    def _add_char(self):
+        if not _ensure_hwp(self):
+            return
+        prefill = self._read_selected_text() if hwp_engine.has_selection() else ""
+        dlg = TextInputDialog(self, prefill)
+        self.wait_window(dlg)
+        if dlg.result is None or not dlg.result.strip():
+            return
+        content = dlg.result
+        default_name = content.strip().replace("\n", " ")[:10]
+        meta = MetaDialog(self, title="문자/문구 등록", name=default_name)
+        self.wait_window(meta)
+        if not meta.result:
+            return
+        name, label, group = meta.result
+        library.add_char(name, content, label=label, group=group)
+        self._refresh("문자")
+        self._notify()
+
+    # ── 템플릿 ───────────────────────────────────────
+    def _add_template(self):
+        if not _ensure_hwp(self):
+            return
+        if not hwp_engine.has_selection():
+            # 드래그가 없어도, 표 안을 클릭만 해뒀으면 표 전체를 자동 선택
+            if not hwp_engine.auto_select_table_if_inside():
+                messagebox.showwarning("선택 없음",
+                    "한글에서 템플릿으로 저장할 영역을 드래그로 선택하거나,\n"
+                    "표를 저장하려면 표 안을 클릭만 해둬도 됩니다.", parent=self)
+                return
+        # 빈칸 스캔 — \이름\ = 이름 빈칸, \ 홀로 = 순서 빈칸
+        import parser as md_parser
+        captured_text = hwp_engine.read_selection_text(retries=6)
+        slot_names = [s.strip() for s in
+                      md_parser.LIB_TOKEN_RE.findall(captured_text)]
+        slot_count = captured_text.count("\\") - 2 * len(slot_names)
+        slot_count = max(slot_count, 0)
+        parts = []
+        if slot_count:
+            parts.append(f"순서 빈칸(\\) {slot_count}개 — 아랫줄들이 순서대로")
+        if slot_names:
+            parts.append(f"이름 빈칸 {len(slot_names)}개({', '.join(slot_names[:5])})"
+                         " — '이름=값' 줄로")
+        note = " / ".join(parts) + " 채워집니다." if parts else ""
+        meta = MetaDialog(self, title="템플릿 등록", extra_note=note)
+        self.wait_window(meta)
+        if not meta.result:
+            return
+        name, label, group = meta.result
+        library.FRAGMENTS_DIR.mkdir(exist_ok=True)
+        tmp_path = library.FRAGMENTS_DIR / f"_tmp_{int(time.time()*1000)}.hwp"
+        try:
+            hwp_engine.capture_fragment(tmp_path)
+        except Exception as e:
+            messagebox.showerror("캡처 실패", str(e), parent=self)
+            return
+        library.add_template_from_capture(name, tmp_path, label=label,
+                                          group=group, slot_count=slot_count,
+                                          slot_names=slot_names)
+        self._refresh("템플릿")
+        self._notify()
+
+    # ── 공통: 적용/삽입 · 삭제 ───────────────────────
+    def _act(self, cat, item):
+        if not _ensure_hwp(self):
+            return
+        try:
+            if cat == "서식":
+                if not hwp_engine.has_selection():
+                    messagebox.showwarning("선택 없음",
+                        "서식을 입힐 글자를 한글에서 먼저 선택해주세요.", parent=self)
+                    return
+                hwp_engine.apply_charshape_delta(item["fields"])
+            elif cat == "문자":
+                hwp_engine.insert_plain(item["text"])
+            else:
+                hwp_engine.insert_fragment(library.template_path(item))
+        except Exception as e:
+            messagebox.showerror("오류", f"{type(e).__name__}: {e}", parent=self)
+
+    def _delete(self, cat, name):
+        if messagebox.askyesno("삭제", f"'{name}' 항목을 삭제할까요?", parent=self):
+            library.delete_item(cat, name)
+            self._refresh(cat)
+            self._notify()
+
+    def _notify(self):
+        if self.on_saved:
+            self.on_saved()
+
+
+def open_manager(master, on_saved=None):
+    return LibraryManager(master, on_saved=on_saved)

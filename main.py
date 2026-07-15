@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-마크다운 → 한글 시험문제 변환기 — UI
-(30_exam_edit/exam_convert_v4_8_1(0525).py를 exam_scribe로 이식)
+hwp_palette — 한글(HWP) 커스텀 팔레트 · 마크다운 변환 도구 (UI)
+(30_exam_edit → exam_scribe → hwp_palette 로 발전)
 
 버전 정보
 ─────────────────────────────────────────
@@ -52,7 +52,10 @@ import parser as md_parser
 import hwp_engine
 import settings
 import settings_ui
-import quickbuttons_ui
+import library
+import library_ui
+import palette
+import palette_ui
 
 # 설정 파일 입출력은 settings 모듈로 통합
 load_config = settings.load_config
@@ -60,7 +63,7 @@ save_config = settings.save_config
 
 
 print(f"{'='*45}")
-print(f"  마크다운 → 한글 변환기 v{VERSION}")
+print(f"  hwp_palette v{VERSION}")
 print(f"  실행: python {pathlib.Path(__file__).name}")
 print(f"{'='*45}")
 
@@ -82,6 +85,10 @@ def fn_open_settings():
     settings_ui.open_settings(root, on_saved=on_settings_saved)
 
 
+def fn_open_library():
+    library_ui.open_manager(root)
+
+
 # ── 한컴 연결 ───────────────────────────────────────────
 def ensure_hwp():
     try:
@@ -93,24 +100,9 @@ def ensure_hwp():
 
 
 def read_selected_text():
-    """Copy 후 클립보드에서 선택 텍스트 읽기.
-    메인 root 클립보드 사용 + root.update()로 반영 보장 + 최대 5회 재시도."""
-    try:
-        root.clipboard_clear()
-    except Exception:
-        pass
-    hwp_engine.copy_selection()
-    selected = ""
-    for _ in range(5):
-        try:
-            root.update()
-            selected = root.clipboard_get()
-            if selected:
-                break
-        except Exception:
-            selected = ""
-        time.sleep(0.05)
-    return selected
+    """선택 텍스트 읽기 — 윈도우 클립보드 직접 접근(hwp_engine)으로 통일.
+    (Tk 클립보드는 한글 Copy와 타이밍이 어긋나 빈 값이 잦았음, 2026-07-15)"""
+    return hwp_engine.read_selection_text()
 
 
 # ── 버튼 함수 ───────────────────────────────────────────
@@ -146,7 +138,7 @@ def fn_save():
 
 
 def fn_convert():
-    """선택 영역 마크다운 → 시험문제 변환"""
+    """선택 영역 마크다운 변환 — 시험문제 문법 또는 라이브러리 \\라벨\\ 문법"""
     if not ensure_hwp(): return
     try:
         selected = read_selected_text()
@@ -155,123 +147,101 @@ def fn_convert():
                 "한글에서 변환할 텍스트를 드래그로 선택해주세요.")
             return
         data = md_parser.parse(selected)
-        if not md_parser.has_recognized_content(data):
-            messagebox.showwarning("파싱 실패",
-                "마크다운 형식을 인식하지 못했어요.\n"
-                "'발문:', '자료:', '질문:', '보기:', '선지:' 형식을 확인해주세요.")
+        if md_parser.has_recognized_content(data):
+            # 시험문제 변환 (기존 동작)
+            hwp_engine.delete_selection()
+            should_increment = hwp_engine.insert_question(data, num_var.get(), num_use.get())
+            if should_increment:
+                num_var.set(num_var.get() + 1)
+            status_var.set("✅ 변환 완료!")
             return
-        hwp_engine.delete_selection()
-        should_increment = hwp_engine.insert_question(data, num_var.get(), num_use.get())
-        if should_increment:
-            num_var.set(num_var.get() + 1)
-        status_var.set("✅ 변환 완료!")
-    except Exception as e:
-        messagebox.showerror("오류", f"{type(e).__name__}: {e}")
-
-
-def fn_insert_bogi():
-    """빈 보기 박스만 삽입"""
-    if not ensure_hwp(): return
-    try:
-        hwp_engine.insert_bogi_box(items=None)
-        status_var.set("✅ 보기 박스 삽입")
-    except Exception as e:
-        messagebox.showerror("오류", f"{type(e).__name__}: {e}")
-
-
-def fn_insert_material():
-    """기본형 자료박스 삽입 (빈 박스)"""
-    if not ensure_hwp(): return
-    try:
-        hwp_engine.insert_material_box("")
-        status_var.set("✅ 자료 박스 삽입")
-    except Exception as e:
-        messagebox.showerror("오류", f"{type(e).__name__}: {e}")
-
-
-def fn_insert_picture(img_path):
-    if not ensure_hwp(): return
-    try:
-        hwp_engine.insert_picture_to_cell(img_path)
-        status_var.set(f"✅ 사진 삽입: {pathlib.Path(img_path).name}")
+        if md_parser.has_library_tokens(selected):
+            # 라이브러리 변환: \라벨\ → 문자 치환 / 템플릿 삽입 + 빈칸 채움
+            lookup = library.label_lookup()
+            ops, warns = md_parser.build_library_plan(selected, lookup)
+            hwp_engine.delete_selection()
+            result = hwp_engine.execute_library_plan(ops, library.template_path)
+            msg = (f"✅ 라이브러리 변환: 템플릿 {result['templates']}개, "
+                   f"빈칸 {result['slots_filled']}개")
+            if warns:
+                messagebox.showwarning("변환 주의", "\n".join(warns[:8]))
+            status_var.set(msg)
+            return
+        messagebox.showwarning("파싱 실패",
+            "마크다운 형식을 인식하지 못했어요.\n"
+            "시험문제: '발문:', '자료:', '질문:', '보기:', '선지:'\n"
+            "라이브러리: \\라벨\\ (등록한 라벨)")
     except Exception as e:
         messagebox.showerror("오류", f"{type(e).__name__}: {e}")
 
 
 def fn_reset_format():
-    """드래그한 영역의 모든 변형을 기본으로 되돌림
-       (원문자 삭제 + 굵게/밑줄/자간 등 글자서식 + 줄간격/정렬 초기화)"""
+    """선택 영역을 환경설정의 기본 서식으로 되돌림 (원문자 삭제 포함)."""
     if not ensure_hwp(): return
     try:
         if not hwp_engine.has_selection():
             messagebox.showwarning("선택 없음",
                 "기본으로 되돌릴 영역을 드래그로 선택해주세요.")
             return
-
         selected = read_selected_text()
         if not selected:
             messagebox.showwarning("읽기 실패",
                 "선택 내용을 읽지 못했어요. 영역을 다시 드래그한 뒤 시도해주세요.")
             return
-
-        if not messagebox.askyesno("기본 서식으로 변환",
-                "선택 영역의 원문자를 삭제하고 모든 서식(굵게·밑줄·자간·줄간격 등)을 "
-                "기본으로 되돌립니다.\n계속할까요?"):
-            return
-
         cleaned = md_parser.strip_circled_markers(selected)
-        hwp_engine.apply_reset_format(cleaned)
-        status_var.set("✅ 기본 서식으로 변환 완료")
+        hwp_engine.apply_default_format(palette.get_default_format(), text=cleaned)
+        status_var.set("✅ 기본 서식으로 변환")
     except Exception as e:
         messagebox.showerror("오류", f"{type(e).__name__}: {e}")
 
 
-def hwp_run(action):
+def fn_open_palette_settings():
+    palette_ui.open_settings(root, on_saved=render_palette)
+
+
+def fn_pick_photo():
+    """사진 삽입 — 파일 선택 후 커서 위치(셀)에 삽입 (따로 뺀 기능)."""
+    if not ensure_hwp(): return
+    path = filedialog.askopenfilename(
+        title="삽입할 사진 선택",
+        filetypes=[("이미지", "*.png *.jpg *.jpeg *.gif *.bmp *.tif *.tiff *.webp"),
+                   ("모든 파일", "*.*")])
+    if not path:
+        return
+    try:
+        hwp_engine.insert_picture_to_cell(path)
+        status_var.set(f"✅ 사진 삽입: {pathlib.Path(path).name}")
+    except Exception as e:
+        messagebox.showerror("오류", f"{type(e).__name__}: {e}")
+
+
+def _template_item_by_name(name):
+    for it in library.list_items("템플릿"):
+        if it["name"] == name:
+            return it
+    return None
+
+
+def _template_path_by_name(name):
+    it = _template_item_by_name(name)
+    return library.template_path(it) if it else None
+
+
+def _template_slots_by_name(name):
+    it = _template_item_by_name(name)
+    return it.get("slot_names", []) if it else []
+
+
+def run_palette_block(block):
+    """팔레트 블럭 클릭 — 종류에 따라 삽입/적용."""
     if not ensure_hwp(): return
     try:
-        hwp_engine.run_action(action)
+        ok, msg = hwp_engine.run_block(
+            block, template_path_fn=_template_path_by_name,
+            slot_names_fn=_template_slots_by_name)
+        status_var.set(("✅ " if ok else "⚠ ") + msg)
     except Exception as e:
-        status_var.set(f"오류: {e}")
-
-
-def insert_char(ch):
-    if not ensure_hwp(): return
-    try:
-        if hwp_engine.has_selection():
-            selected = read_selected_text()
-            if selected and selected.strip():
-                hwp_engine.insert_marked_choice(ch, selected)
-                return
-        hwp_engine.insert_plain(ch)
-    except Exception as e:
-        status_var.set(f"오류: {e}")
-
-
-def insert_quick(s):
-    """빠른 입력 버튼 — 기호를 그대로 삽입 (현재 문서 서식 유지)."""
-    if not ensure_hwp(): return
-    try:
-        hwp_engine.insert_plain(s)
-        status_var.set(f"삽입: {s}")
-    except Exception as e:
-        status_var.set(f"오류: {e}")
-
-
-_markpen_on = [False]
-def toggle_markpen():
-    if not ensure_hwp(): return
-    try:
-        new_state = not _markpen_on[0]
-        hwp_engine.set_markpen(new_state)
-        _markpen_on[0] = new_state
-        if new_state:
-            markpen_btn.config(bg="#FFD60A", fg=TEXT)
-            status_var.set("형광펜 ON")
-        else:
-            markpen_btn.config(bg=CARD, fg="#d99e00")
-            status_var.set("형광펜 OFF")
-    except Exception as e:
-        status_var.set(f"오류: {e}")
+        status_var.set(f"오류: {type(e).__name__}: {e}")
 
 
 # ── UI (Apple 스타일 밝은 톤) ──────────────────
@@ -288,7 +258,7 @@ FONT   = "맑은 고딕"
 
 
 root = tk.Tk()
-root.title(f"변환기 v{VERSION}")
+root.title(f"hwp_palette v{VERSION}")
 root.configure(bg=BG)
 root.resizable(False, False)
 root.attributes("-topmost", True)
@@ -302,7 +272,7 @@ title = tk.Frame(root, bg=CARD, pady=10, padx=14)
 title.pack(fill="x")
 title.bind("<ButtonPress-1>", start_drag)
 title.bind("<B1-Motion>", drag)
-tk.Label(title, text="마크다운 → 한글 변환기",
+tk.Label(title, text="hwp_palette",
          font=(FONT, 11, "bold"), fg=TEXT, bg=CARD).pack(side="left")
 tk.Label(title, text=f"v{VERSION}",
          font=(FONT, 8), fg=MUTED, bg=CARD).pack(side="left", padx=(6, 0))
@@ -320,11 +290,19 @@ for label, cmd in [("📄 새 문서", fn_new), ("📂 열기", fn_open), ("💾
               font=(FONT, 9), fg=TEXT, bg=CARD,
               activebackground=BORDER, bd=0, padx=12, pady=6,
               cursor="hand2").pack(side="left", padx=(0, 6))
-# 설정(양식 프리셋) 버튼 — 오른쪽 끝
-tk.Button(file_row, text="⚙ 양식 설정", command=fn_open_settings,
+# 환경설정 / 양식 설정 / 라이브러리 버튼 — 오른쪽 끝
+tk.Button(file_row, text="⚙ 환경설정", command=lambda: fn_open_palette_settings(),
           font=(FONT, 9), fg=TEXT, bg=CARD,
           activebackground=BORDER, bd=0, padx=12, pady=6,
           cursor="hand2").pack(side="right")
+tk.Button(file_row, text="📐 양식", command=fn_open_settings,
+          font=(FONT, 9), fg=TEXT, bg=CARD,
+          activebackground=BORDER, bd=0, padx=12, pady=6,
+          cursor="hand2").pack(side="right", padx=(0, 6))
+tk.Button(file_row, text="📚 라이브러리", command=lambda: fn_open_library(),
+          font=(FONT, 9), fg=TEXT, bg=CARD,
+          activebackground=BORDER, bd=0, padx=12, pady=6,
+          cursor="hand2").pack(side="right", padx=(0, 6))
 
 # 안내 (접이식)
 guide_wrap = tk.Frame(root, bg=BG, padx=14, pady=4)
@@ -334,15 +312,19 @@ _guide_open = [False]
 guide_body = tk.Frame(guide_wrap, bg=SUBBG, highlightbackground=BORDER, highlightthickness=1)
 
 GUIDE_TEXT = (
-    "[입력 형식]                          [변환 결과]\n"
-    "발문: 다음 그림은…              →  1. 다음 그림은…\n"
-    "자료:                                 →  (자료 박스)\n"
-    "사진자료: / 실험자료:          →  (사진/실험 박스)\n"
-    "질문: 옳은 것은?                  →  (들여쓴 질문)\n"
-    "보기:                                 →  〈보 기〉 박스\n"
-    "  항목1 / 항목2                    →  ㄱ. 항목1  ㄴ. 항목2\n"
-    "선지: (또는 선지1/선지3/선지5)\n"
-    "  ㄱ / ㄱㄴ / ㄱㄴㄷ            →  ① ㄱ  ② ㄴ … (표 배치)"
+    "■ 시험문제 문법 (한 문항을 통째로 변환)\n"
+    "  발문:  …   → 1. …  (문항 번호 자동)\n"
+    "  질문:  …   → 들여쓴 질문 문단\n"
+    "  보기:      → 〈보 기〉 박스, 아랫줄이 ㄱ.ㄴ.ㄷ.\n"
+    "  선지:      → ① ② ③ … 표 배치 (선지1/선지3/선지5)\n"
+    "\n"
+    "■ 라이브러리 문법 (등록한 항목 호출)\n"
+    "  \\라벨\\        → 문자·문구 삽입 / 템플릿 삽입\n"
+    "  \\원1\\ \\로마3\\ → 내장 문자 (① Ⅲ …)\n"
+    "  템플릿은 단독 줄로 쓰고, 아랫줄들이\n"
+    "  템플릿 속 빈칸 \\ 에 순서대로 채워집니다.\n"
+    "\n"
+    "※ 변환할 부분을 드래그 → 마크다운 변환 (Ctrl+T)"
 )
 tk.Label(guide_body, text=GUIDE_TEXT, font=("Consolas", 8),
          fg=TEXT, bg=SUBBG, justify="left").pack(anchor="w", padx=12, pady=10)
@@ -388,221 +370,115 @@ num_reset = tk.Button(num_row, text="초기화", command=lambda: num_var.set(1),
           activebackground=BORDER, cursor="hand2")
 num_reset.pack(side="left", padx=(6,0))
 
-# 메인 버튼
+# 고정 버튼 2개: 마크다운 변환 / 기본 서식으로 변환 (+ 사진)
 btn_area = tk.Frame(root, bg=BG, padx=14, pady=8)
 btn_area.pack(fill="x")
-
-tk.Button(btn_area, text="마크다운 변환",
+tk.Button(btn_area, text="마크다운 변환  (Ctrl+T)",
           command=fn_convert,
-          font=(FONT, 13, "bold"), fg="white", bg=ACCENT,
+          font=(FONT, 12, "bold"), fg="white", bg=ACCENT,
           activebackground="#0077ed", activeforeground="white",
-          bd=0, padx=10, cursor="hand2", width=12).pack(side="left", fill="y", padx=(0, 8))
-
-insert_col = tk.Frame(btn_area, bg=BG)
-insert_col.pack(side="left", fill="both", expand=True)
-for label, cmd in [("📦  보기박스 삽입", fn_insert_bogi),
-                   ("🗂  자료박스 삽입", fn_insert_material)]:
-    tk.Button(insert_col, text=label, command=cmd,
-              font=(FONT, 10, "bold"), fg=TEXT, bg=YELLOW,
-              activebackground=BORDER, bd=0, pady=10,
-              cursor="hand2").pack(fill="x", pady=(0, 6))
-
-# 서식 도구
-tk.Frame(root, bg=BORDER, height=1).pack(fill="x", padx=14, pady=(4, 0))
-tk.Label(root, text="서식", font=(FONT, 8), fg=MUTED, bg=BG).pack(anchor="w", padx=14, pady=(8, 2))
-
-fmt_area = tk.Frame(root, bg=BG, padx=14, pady=2)
-fmt_area.pack(fill="x")
-
-for label, action in [("B", "CharShapeBold"), ("U", "CharShapeUnderline"), ("I", "CharShapeItalic")]:
-    styles = {"B": "bold", "U": "normal", "I": "italic"}
-    tk.Button(fmt_area, text=label,
-              command=lambda a=action: hwp_run(a),
-              font=(FONT, 10, styles[label]), fg=TEXT, bg=CARD,
-              activebackground=BORDER, bd=0, padx=10, pady=4,
-              cursor="hand2", width=3).pack(side="left", padx=(0, 3))
-
-markpen_btn = tk.Button(fmt_area, text="🖍",
-          command=toggle_markpen,
-          font=(FONT, 11), fg="#d99e00", bg=CARD,
-          activebackground=BORDER, bd=0, padx=8, pady=4,
-          cursor="hand2", width=3)
-markpen_btn.pack(side="left", padx=(3, 3))
-
-tk.Frame(fmt_area, bg=BORDER, width=1).pack(side="left", fill="y", padx=(4, 6))
-
-tk.Label(fmt_area, text="자간", font=(FONT, 8), fg=MUTED, bg=BG).pack(side="left", padx=(0,3))
-for label, action in [("−", "CharShapeSpacingDecrease"),
-                      ("+", "CharShapeSpacingIncrease")]:
-    tk.Button(fmt_area, text=label,
-              command=lambda a=action: hwp_run(a),
-              font=(FONT, 10, "bold"), fg=TEXT, bg=CARD,
-              activebackground=BORDER, bd=0, pady=4,
-              cursor="hand2", width=2).pack(side="left", padx=(0, 2))
-
-tk.Frame(fmt_area, bg=BORDER, width=1).pack(side="left", fill="y", padx=(4, 6))
-
-tk.Label(fmt_area, text="줄간격", font=(FONT, 8), fg=MUTED, bg=BG).pack(side="left", padx=(0,3))
-for label, action in [("−", "ParagraphShapeDecreaseLineSpacing"),
-                      ("+", "ParagraphShapeIncreaseLineSpacing")]:
-    tk.Button(fmt_area, text=label,
-              command=lambda a=action: hwp_run(a),
-              font=(FONT, 10, "bold"), fg=TEXT, bg=CARD,
-              activebackground=BORDER, bd=0, pady=4,
-              cursor="hand2", width=2).pack(side="left", padx=(0, 2))
-
-reset_row = tk.Frame(root, bg=BG, padx=14, pady=8)
-reset_row.pack(fill="x", pady=(0, 4))
-tk.Button(reset_row, text="↺  모든 변형을 기본으로",
-          command=fn_reset_format,
+          bd=0, pady=10, cursor="hand2").pack(fill="x")
+sub_btn = tk.Frame(btn_area, bg=BG)
+sub_btn.pack(fill="x", pady=(6, 0))
+tk.Button(sub_btn, text="↺ 기본 서식으로 변환", command=fn_reset_format,
           font=(FONT, 9, "bold"), fg=TEXT, bg=YELLOW,
           activebackground=BORDER, bd=0, pady=7,
-          cursor="hand2").pack(fill="x")
+          cursor="hand2").pack(side="left", fill="x", expand=True, padx=(0, 4))
+tk.Button(sub_btn, text="🖼 사진", command=fn_pick_photo,
+          font=(FONT, 9), fg=TEXT, bg=CARD, activebackground=BORDER,
+          bd=1, padx=12, pady=7, cursor="hand2").pack(side="left")
 
-# 원문자
+# ── 커스텀 팔레트 (탭 + 블럭) ──────────────────────────
 tk.Frame(root, bg=BORDER, height=1).pack(fill="x", padx=14, pady=(8, 0))
-tk.Label(root, text="원문자", font=(FONT, 8), fg=MUTED, bg=BG).pack(anchor="w", padx=14, pady=(8, 2))
 
-circ_area = tk.Frame(root, bg=BG, padx=14, pady=4)
-circ_area.pack(fill="x", pady=(0, 4))
-for row_chars in [["①","②","③","④","⑤"],
-                  ["㉠","㉡","㉢","㉣","㉤"],
-                  ["ⓐ","ⓑ","ⓒ","ⓓ","ⓔ"]]:
-    row = tk.Frame(circ_area, bg=BG)
-    row.pack(fill="x", pady=1)
-    for ch in row_chars:
-        tk.Button(row, text=ch,
-                  command=lambda c=ch: insert_char(c),
-                  font=(FONT, 11), fg=TEXT, bg=CARD,
-                  activebackground=BORDER, bd=0, pady=4,
-                  cursor="hand2", width=4).pack(side="left", padx=2)
+_pal_state = {"tab": 0}
 
-# 빠른 입력 (사용자 편집 가능)
-tk.Frame(root, bg=BORDER, height=1).pack(fill="x", padx=14, pady=(8, 0))
-quick_head = tk.Frame(root, bg=BG, padx=14, pady=8)
-quick_head.pack(fill="x", pady=(8, 0))
-tk.Label(quick_head, text="빠른 입력", font=(FONT, 8), fg=MUTED, bg=BG).pack(side="left")
-tk.Button(quick_head, text="✏ 편집", command=lambda: fn_open_quick_editor(),
-          font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
-          bd=0, padx=8, pady=2, cursor="hand2").pack(side="right")
+pal_tabbar = tk.Frame(root, bg=BG, padx=14)
+pal_tabbar.pack(fill="x", pady=(8, 0))
 
-quick_area = tk.Frame(root, bg=BG, padx=14, pady=4)
-quick_area.pack(fill="x", pady=(0, 4))
+pal_area = tk.Frame(root, bg=BG, padx=14, pady=4)
+pal_area.pack(fill="x", pady=(2, 6))
 
-def render_quick_buttons():
-    for w in quick_area.winfo_children():
+
+def _select_pal_tab(i):
+    _pal_state["tab"] = i
+    render_palette()
+
+
+def render_palette():
+    for w in pal_tabbar.winfo_children():
         w.destroy()
-    items = settings.get_quick_buttons()
-    last = -1
-    for i, v in enumerate(items):
-        if v.strip():
-            last = i
-    if last < 0:
-        tk.Label(quick_area, text="‘✏ 편집’으로 기호를 추가하세요",
+    for w in pal_area.winfo_children():
+        w.destroy()
+
+    tabs = palette.load_tabs()
+    if not tabs:
+        tk.Label(pal_area, text="‘⚙ 환경설정’에서 탭과 블럭을 만들어보세요.",
                  font=(FONT, 8), fg=MUTED, bg=BG).pack(anchor="w")
         return
-    cols = settings.QUICK_COLS
-    for r in range((last // cols) + 1):
-        row = tk.Frame(quick_area, bg=BG)
-        row.pack(fill="x", pady=1)
-        for c in range(cols):
-            idx = r * cols + c
-            ch = items[idx] if idx < len(items) else ""
-            if ch.strip():
-                tk.Button(row, text=ch,
-                          command=lambda s=ch: insert_quick(s),
-                          font=(FONT, 11), fg=TEXT, bg=CARD,
-                          activebackground=BORDER, bd=0, pady=4,
-                          cursor="hand2", width=4).pack(side="left", padx=2)
-            else:
-                tk.Label(row, text="", width=4, bg=BG).pack(side="left", padx=2)
+    cur = _pal_state["tab"]
+    if cur >= len(tabs):
+        cur = _pal_state["tab"] = 0
 
-def fn_open_quick_editor():
-    quickbuttons_ui.open_editor(root, on_saved=render_quick_buttons)
+    # 탭 버튼들 + ⚙
+    for i, t in enumerate(tabs):
+        active = i == cur
+        tk.Button(pal_tabbar, text=t["name"], font=(FONT, 9, "bold"),
+                  bg=ACCENT if active else CARD, fg="white" if active else TEXT,
+                  bd=0, padx=10, pady=5, cursor="hand2",
+                  command=lambda idx=i: _select_pal_tab(idx)).pack(side="left", padx=(0, 3))
+    tk.Button(pal_tabbar, text="⚙", font=(FONT, 9),
+              command=lambda: fn_open_palette_settings(),
+              bg=CARD, fg=MUTED, bd=0, padx=8, pady=5,
+              cursor="hand2").pack(side="right")
 
-render_quick_buttons()
-
-# 사진 삽입
-tk.Frame(root, bg=BORDER, height=1).pack(fill="x", padx=14, pady=(8, 0))
-
-photo_head = tk.Frame(root, bg=BG, padx=14, pady=8)
-photo_head.pack(fill="x", pady=(8, 0))
-tk.Label(photo_head, text="사진 삽입", font=(FONT, 8), fg=MUTED, bg=BG).pack(side="left")
-
-IMG_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp")
-_cfg = load_config()
-photo_dir = [_cfg.get("photo_dir", "")]
-
-def refresh_photo_list():
-    photo_listbox.delete(0, tk.END)
-    d = photo_dir[0]
-    if not d or not pathlib.Path(d).is_dir():
-        photo_listbox.insert(tk.END, "  (폴더를 먼저 선택하세요)")
-        photo_path_label.config(text="폴더 미지정")
+    # 블럭 그리드
+    tab = tabs[cur]
+    cols = tab.get("cols", 5)
+    blocks = tab.get("blocks", [])
+    if not blocks:
+        tk.Label(pal_area, text="이 탭에 블럭이 없습니다. ⚙로 추가하세요.",
+                 font=(FONT, 8), fg=MUTED, bg=BG).pack(anchor="w")
         return
-    p = pathlib.Path(d)
-    files = sorted([f.name for f in p.iterdir()
-                    if f.is_file() and f.suffix.lower() in IMG_EXTS])
-    if not files:
-        photo_listbox.insert(tk.END, "  (이 폴더에 사진이 없습니다)")
+
+    grid = tk.Frame(pal_area, bg=BG)
+    grid.pack(fill="x")
+    for c in range(cols):
+        grid.columnconfigure(c, weight=1, uniform="pal")
+    r = c = 0
+    for blk in blocks:
+        span = min(int(blk.get("span", 1)), cols)
+        if c + span > cols:      # 칸 넘치면 다음 줄
+            r += 1
+            c = 0
+        _make_block_button(grid, blk).grid(
+            row=r, column=c, columnspan=span, sticky="ew", padx=2, pady=2)
+        c += span
+        if c >= cols:
+            r += 1
+            c = 0
+
+
+_BLOCK_COLOR = {"char": CARD, "template": "#eef4ff", "function": "#fff4e6"}
+
+
+def _make_block_button(parent, blk):
+    if blk["type"] == "char":
+        label = blk.get("value", "")
+    elif blk["type"] == "template":
+        label = "▦ " + blk.get("template", "")
     else:
-        for name in files:
-            photo_listbox.insert(tk.END, name)
-    shown = d if len(d) <= 32 else "…" + d[-31:]
-    photo_path_label.config(text=shown)
+        label = "ƒ " + blk.get("name", "")
+    if len(label) > 14:
+        label = label[:14] + "…"
+    return tk.Button(parent, text=label,
+                     command=lambda b=blk: run_palette_block(b),
+                     font=(FONT, 10), fg=TEXT, bg=_BLOCK_COLOR.get(blk["type"], CARD),
+                     activebackground=BORDER, bd=1, relief="solid", pady=6,
+                     cursor="hand2")
 
-def choose_photo_dir():
-    d = filedialog.askdirectory(title="사진 폴더 선택")
-    if d:
-        photo_dir[0] = d
-        cfg = load_config(); cfg["photo_dir"] = d; save_config(cfg)
-        refresh_photo_list()
 
-def insert_selected_photo(event=None):
-    d = photo_dir[0]
-    if not d:
-        return
-    sel = photo_listbox.curselection()
-    if not sel:
-        return
-    name = photo_listbox.get(sel[0])
-    if name.strip().startswith("("):
-        return
-    img_path = pathlib.Path(d) / name
-    if img_path.is_file():
-        fn_insert_picture(img_path)
-
-tk.Button(photo_head, text="📁 폴더 선택", command=choose_photo_dir,
-          font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
-          bd=0, padx=8, pady=2, cursor="hand2").pack(side="right")
-tk.Button(photo_head, text="↻", command=lambda: refresh_photo_list(),
-          font=(FONT, 9), fg=TEXT, bg=CARD, activebackground=BORDER,
-          bd=0, padx=8, pady=2, cursor="hand2").pack(side="right", padx=(0, 4))
-
-photo_path_label = tk.Label(root, text="폴더 미지정", font=(FONT, 7),
-          fg=MUTED, bg=BG, anchor="w")
-photo_path_label.pack(fill="x", padx=14)
-
-photo_box = tk.Frame(root, bg=BG, padx=14, pady=4)
-photo_box.pack(fill="x")
-photo_scroll = tk.Scrollbar(photo_box)
-photo_scroll.pack(side="right", fill="y")
-photo_listbox = tk.Listbox(photo_box, height=4, font=(FONT, 9),
-          bg=CARD, fg=TEXT, bd=0, highlightthickness=1,
-          highlightbackground=BORDER, selectbackground=ACCENT,
-          selectforeground="white", activestyle="none",
-          yscrollcommand=photo_scroll.set)
-photo_listbox.pack(side="left", fill="both", expand=True)
-photo_scroll.config(command=photo_listbox.yview)
-photo_listbox.bind("<Double-Button-1>", insert_selected_photo)
-
-tk.Button(root, text="🖼  선택한 사진 삽입", command=insert_selected_photo,
-          font=(FONT, 9, "bold"), fg=TEXT, bg=YELLOW,
-          activebackground=BORDER, bd=0, pady=6,
-          cursor="hand2").pack(fill="x", padx=14, pady=(0, 4))
-
-refresh_photo_list()
-root.bind("<FocusIn>", lambda e: refresh_photo_list())
+render_palette()
 
 # 상태 표시 + 버전/날짜 (CLAUDE.md 규칙: 하단 필수 표기)
 status_var = tk.StringVar(value=f"양식: {settings.get_active_name()}")
@@ -610,6 +486,10 @@ tk.Label(root, textvariable=status_var,
          font=(FONT, 8), fg=MUTED, bg=BG).pack(pady=(6, 0))
 tk.Label(root, text=f"v{VERSION} · {RELEASE_DATE}",
          font=(FONT, 7), fg=MUTED, bg=BG).pack(pady=(0, 10))
+
+# 단축키: Ctrl+T = 마크다운 변환
+root.bind_all("<Control-t>", lambda e: fn_convert())
+root.bind_all("<Control-T>", lambda e: fn_convert())
 
 root.update_idletasks()
 sw = root.winfo_screenwidth()

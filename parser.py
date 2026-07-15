@@ -102,3 +102,81 @@ def has_recognized_content(data):
 def strip_circled_markers(text):
     """원문자(①②…㉠㉡…ⓐⓑ…) + 뒤 공백 1칸 제거 — 기본 서식 되돌리기용"""
     return re.sub(CIRCLED_MARKER_PATTERN, '', text)
+
+
+# ── 라이브러리 마크다운 (\라벨\ 문법) ─────────────────────
+# \인사말\ → 문자 치환(줄 안 어디서든), \보기\ 단독 줄 → 템플릿 삽입 +
+# 아랫줄들이 템플릿 속 빈칸(\)에 순서대로 들어간다.
+LIB_TOKEN_RE = re.compile(r'\\([^\\\r\n]+?)\\')
+
+
+def has_library_tokens(text):
+    return bool(LIB_TOKEN_RE.search(text or ''))
+
+
+def _replace_char_tokens(line, lookup, warnings):
+    r"""줄 안의 \라벨\ 중 '문자' 항목만 내용으로 치환. 나머지는 원문 유지 + 경고."""
+    def repl(m):
+        label = m.group(1).strip()
+        entry = lookup.get(label)
+        if entry and entry[0] == '문자':
+            return entry[1]['text']
+        if entry and entry[0] == '템플릿':
+            warnings.append(f"템플릿 라벨은 한 줄에 단독으로 써주세요: \\{label}\\")
+        elif entry and entry[0] == '서식':
+            warnings.append(f"서식 라벨은 아직 변환 미지원: \\{label}\\")
+        else:
+            warnings.append(f"등록되지 않은 라벨: \\{label}\\")
+        return m.group(0)
+    return LIB_TOKEN_RE.sub(repl, line)
+
+
+def build_library_plan(text, lookup):
+    r"""선택 텍스트 → 실행 계획.
+
+    lookup: {라벨: (분류명, 항목dict)} — library.label_lookup() 결과.
+    반환: (ops, warnings)
+      ops: ('line', 텍스트) — 그대로 삽입할 한 줄
+           ('template', 항목, {'named': {이름: 값}, 'ordered': [줄들]})
+             — 템플릿 삽입 + 빈칸 채움. '이름=값' 줄은 이름 빈칸(\이름\)으로,
+               그 외 줄은 이름 없는 빈칸(\)에 순서대로.
+    """
+    ops, warnings = [], []
+    lines = (text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        m = LIB_TOKEN_RE.fullmatch(stripped)
+        if m:
+            label = m.group(1).strip()
+            entry = lookup.get(label)
+            if entry and entry[0] == '템플릿':
+                item = entry[1]
+                slot_count = int(item.get('slot_count') or 0)
+                slot_names = list(item.get('slot_names') or [])
+                named, ordered = {}, []
+                j = i + 1
+                while (len(ordered) < slot_count
+                       or len(named) < len(slot_names)) and j < len(lines):
+                    cand = lines[j].strip()
+                    if not cand:
+                        j += 1
+                        continue
+                    if LIB_TOKEN_RE.fullmatch(cand):
+                        break          # 다음 라벨 시작 — 여기까지가 이 템플릿 몫
+                    eq = cand.split('=', 1)
+                    if len(eq) == 2 and eq[0].strip() in slot_names:
+                        # '이름=값' — 이 템플릿의 이름 빈칸에만 해당할 때
+                        named[eq[0].strip()] = _replace_char_tokens(
+                            eq[1].strip(), lookup, warnings)
+                    elif len(ordered) < slot_count:
+                        ordered.append(_replace_char_tokens(lines[j], lookup, warnings))
+                    else:
+                        break          # 순서 빈칸도 다 찼는데 이름 줄도 아님 — 본문
+                    j += 1
+                ops.append(('template', item, {'named': named, 'ordered': ordered}))
+                i = j
+                continue
+        ops.append(('line', _replace_char_tokens(lines[i], lookup, warnings)))
+        i += 1
+    return ops, warnings

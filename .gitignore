@@ -3,6 +3,10 @@ config.json
 *.env
 .env
 
+# 개인 라이브러리(서식/문자/템플릿) — 사용자별 데이터
+library.json
+fragments/
+
 # Python
 __pycache__/
 *.pyc
