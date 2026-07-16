@@ -6,6 +6,7 @@
 """
 
 from pyhwpx import Hwp
+import applog
 import settings
 
 # ── 라이브러리(서식/문자/템플릿) 캡처·적용 필드 스펙 ─────
@@ -101,7 +102,8 @@ def connect():
     try:
         import win32gui
         saved = [(h, win32gui.GetWindowPlacement(h)) for h in _hwp_window_handles()]
-    except Exception:
+    except Exception as e:
+        applog.exc("창 배치 저장 실패 — 최대화가 풀릴 수 있음", e)
         saved = []
 
     hwp = Hwp()
@@ -110,8 +112,13 @@ def connect():
     for handle, placement in saved:
         try:
             win32gui.SetWindowPlacement(handle, placement)
-        except Exception:
-            pass
+        except Exception as e:
+            applog.exc(f"창 배치 복원 실패 (handle={handle})", e)
+    if not saved:
+        # 실제로 겪은 버그: 클래스명 대소문자 오타로 창을 0개로 봐서
+        # 복원 로직이 통째로 무동작이었는데 아무 소리도 안 났었다.
+        applog.warn("connect: 복원할 한글 창을 찾지 못함 "
+                    "(한글이 새로 실행된 경우면 정상)")
     _diag(f"connect: 복원 시도 후 (저장했던 창 {len(saved)}개)")
     return hwp
 
@@ -494,6 +501,12 @@ def execute_function_block(actions):
             para_fields["left_mm"] = float(val)
         elif func == "오른쪽여백":
             para_fields["right_mm"] = float(val)
+        # 한글 줄나눔 단위 (실측 2026-07-16): BreakNonLatinWord
+        #   1 = 글자 단위(기본, 단어 중간에서 잘림) / 0 = 어절 단위
+        elif func == "어절단위 줄바꿈":
+            para_fields["break_nonlatin"] = 0
+        elif func == "자간 자동조절":
+            para_fields["condense"] = int(val)
 
     # 1) 값 있는 글자서식 묶어서 한 번에
     if char_fields:
@@ -530,6 +543,10 @@ def execute_function_block(actions):
             ps.HParaShape.LeftMargin = hwp.MiliToHwpUnit(para_fields["left_mm"])
         if "right_mm" in para_fields:
             ps.HParaShape.RightMargin = hwp.MiliToHwpUnit(para_fields["right_mm"])
+        if "break_nonlatin" in para_fields:
+            ps.HParaShape.BreakNonLatinWord = para_fields["break_nonlatin"]
+        if "condense" in para_fields:
+            ps.HParaShape.Condense = para_fields["condense"]
         act.Execute("ParagraphShape", ps.HParaShape.HSet)
 
 
@@ -638,6 +655,8 @@ def apply_default_format(fmt, text=None):
     ps.HParaShape.PrevSpacing = 0
     ps.HParaShape.NextSpacing = 0
     ps.HParaShape.AlignType = fmt.get("align", 0)
+    ps.HParaShape.BreakNonLatinWord = 1   # 한글 기본값(글자 단위)으로 복귀
+    ps.HParaShape.Condense = 0            # 자간 자동조절 해제
     act.Execute("ParagraphShape", ps.HParaShape.HSet)
 
     if text is not None:

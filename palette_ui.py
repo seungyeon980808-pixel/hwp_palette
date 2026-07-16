@@ -183,6 +183,7 @@ class SettingsWindow(tk.Toplevel):
         self.sel_tab = 0
         self.sel_block = None
         self._drag_from = None
+        self._drop_hint = None
         self._tile_map = {}
 
         tk.Label(self, text="환경설정", font=(FONT, 12, "bold"),
@@ -345,9 +346,34 @@ class SettingsWindow(tk.Toplevel):
                      font=(FONT, 9), bg=BG, fg=MUTED, justify="left").pack(anchor="w", pady=8)
             return
 
-        grid = tk.Frame(self.block_area, bg=CARD, highlightbackground=BORDER,
+        # 블럭이 많아지면 창을 넘치므로 스크롤 가능한 캔버스에 담는다
+        wrap = tk.Frame(self.block_area, bg=CARD, highlightbackground=BORDER,
                         highlightthickness=1)
-        grid.pack(fill="both", expand=True, pady=(2, 0))
+        wrap.pack(fill="both", expand=True, pady=(2, 0))
+        canvas = tk.Canvas(wrap, bg=CARD, highlightthickness=0, height=260)
+        vbar = tk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+        vbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        grid = tk.Frame(canvas, bg=CARD)
+        win = canvas.create_window((0, 0), window=grid, anchor="nw")
+
+        def _on_grid_resize(_e=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_resize(e):
+            canvas.itemconfigure(win, width=e.width)   # 격자를 캔버스 폭에 맞춤
+
+        grid.bind("<Configure>", _on_grid_resize)
+        canvas.bind("<Configure>", _on_canvas_resize)
+
+        def _wheel(e):
+            canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+        for w in (canvas, grid):
+            w.bind("<MouseWheel>", _wheel)
+        self._canvas = canvas
+
         for c in range(cols):
             grid.columnconfigure(c, weight=1, uniform="cell")
         r = c = 0
@@ -356,12 +382,25 @@ class SettingsWindow(tk.Toplevel):
             if c + span > cols:
                 r += 1
                 c = 0
-            self._make_tile(grid, i, blk).grid(
-                row=r, column=c, columnspan=span, sticky="nsew", padx=1, pady=1)
+            tile = self._make_tile(grid, i, blk)
+            tile.grid(row=r, column=c, columnspan=span, sticky="nsew",
+                      padx=1, pady=1)
+            tile.bind("<MouseWheel>", _wheel)
             c += span
             if c >= cols:
                 r += 1
                 c = 0
+
+        # 마지막 줄 뒤의 빈 칸 = '맨 뒤로 보내기' 놓는 자리 (드래그 대상)
+        self._tail_zone = tk.Frame(grid, bg=CARD, height=34,
+                                    highlightbackground=BORDER,
+                                    highlightthickness=1)
+        tk.Label(self._tail_zone, text="여기로 끌면 맨 뒤로", font=(FONT, 8),
+                 bg=CARD, fg=MUTED).pack(expand=True)
+        self._tail_zone.grid(row=r + 1, column=0, columnspan=cols,
+                             sticky="ew", padx=1, pady=(6, 2))
+        self._tail_zone.bind("<ButtonRelease-1>", self._on_release)
+        self._tail_zone.bind("<MouseWheel>", _wheel)
 
     def _apply_cols(self):
         palette.set_tab_cols(self.sel_tab, self._cols_var.get())
@@ -383,6 +422,7 @@ class SettingsWindow(tk.Toplevel):
         for w in (tile, lab):
             self._tile_map[str(w)] = i
             w.bind("<ButtonPress-1>", lambda e, idx=i: self._on_press(idx))
+            w.bind("<B1-Motion>", self._on_drag)
             w.bind("<ButtonRelease-1>", self._on_release)
             w.bind("<Double-Button-1>", lambda e, idx=i: self._edit_block(idx))
             w.config(cursor="hand2")
@@ -430,18 +470,70 @@ class SettingsWindow(tk.Toplevel):
         self._drag_from = idx
         self._set_selection(idx)
 
+    def _on_drag(self, e):
+        """드래그 중 — 지금 놓으면 어디로 갈지 타일에 표시."""
+        if self._drag_from is None:
+            return
+        under = self.winfo_containing(e.x_root, e.y_root)
+        target = self._widget_to_index(under)
+        if target is None and self._is_tail_zone(under):
+            target = -1                      # 꼬리 영역
+        if target == self._drop_hint:
+            return
+        self._drop_hint = target
+        # 후보 타일만 강조 (원본은 선택색 유지)
+        for i, tile in getattr(self, "_tiles", {}).items():
+            try:
+                if i == target and i != self._drag_from:
+                    tile.config(highlightbackground="#34c759", highlightthickness=3)
+                elif i == self.sel_block:
+                    tile.config(highlightbackground=ACCENT, highlightthickness=2)
+                else:
+                    tile.config(highlightbackground=BORDER, highlightthickness=1)
+            except Exception:
+                pass
+        zone = getattr(self, "_tail_zone", None)
+        if zone is not None:
+            try:
+                zone.config(highlightbackground="#34c759" if target == -1 else BORDER,
+                            highlightthickness=3 if target == -1 else 1)
+            except Exception:
+                pass
+
     def _on_release(self, e):
         src = self._drag_from
         self._drag_from = None
+        self._drop_hint = None
         if src is None:
             return
-        target = self._widget_to_index(self.winfo_containing(e.x_root, e.y_root))
+        under = self.winfo_containing(e.x_root, e.y_root)
+        target = self._widget_to_index(under)
+        if target is None and self._is_tail_zone(under):
+            # 빈 공간(꼬리 영역)에 놓으면 맨 뒤로 보낸다
+            target = len(palette.load_tabs()[self.sel_tab]["blocks"]) - 1
         if target is not None and target != src:
             # 실제로 옮겼을 때만 재렌더 (더블클릭 경로를 막지 않기 위해)
             palette.move_block_to(self.sel_tab, src, target)
             self.sel_block = target
             self._render_blocks()
             self._notify()
+
+    def _is_tail_zone(self, widget):
+        zone = getattr(self, "_tail_zone", None)
+        if zone is None or widget is None:
+            return False
+        w = widget
+        for _ in range(4):
+            if w is zone:
+                return True
+            parent = w.winfo_parent()
+            if not parent:
+                break
+            try:
+                w = w.nametowidget(parent)
+            except Exception:
+                break
+        return False
 
     def _widget_to_index(self, w):
         seen = 0

@@ -9,6 +9,7 @@
 """
 
 import copy
+import applog
 import json
 import pathlib
 
@@ -94,9 +95,14 @@ def deep_merge(base, override):
 
 # ── config.json 입출력 ─────────────────────────────────
 def load_config():
+    if not CONFIG_PATH.exists():
+        return {}                      # 첫 실행 — 정상
     try:
         return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError) as e:
+        # 설정이 깨졌는데 조용히 {} 를 돌려주면 사용자의 팔레트가 통째로
+        # 사라진 것처럼 보인다 → 반드시 기록을 남긴다.
+        applog.exc(f"설정 파일을 읽지 못함 ({CONFIG_PATH.name}) — 기본값으로 시작", e)
         return {}
 
 
@@ -104,8 +110,10 @@ def save_config(cfg):
     try:
         CONFIG_PATH.write_text(
             json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+        return True
+    except (OSError, TypeError) as e:
+        applog.exc(f"설정 저장 실패 ({CONFIG_PATH.name}) — 변경이 유실됨", e)
+        return False
 
 
 def _ensure_profiles(cfg):

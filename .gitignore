@@ -24,3 +24,6 @@ build/
 
 # 진단 로그
 window_diag.log
+
+# 앱 로그
+app.log

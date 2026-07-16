@@ -17,6 +17,7 @@ r"""커스텀 팔레트 — 사용자가 만드는 탭 + 블럭.
 """
 
 import copy
+import applog
 import settings
 
 TABS_KEY = "palette_tabs"
@@ -75,8 +76,10 @@ def _migrate_template_ref(block):
             if it.get("name") == block.get("template"):
                 block["ref"] = it["id"]
                 return True
-    except Exception:
-        pass
+        applog.warn(f"팔레트 블럭이 가리키는 템플릿을 못 찾음: "
+                    f"{block.get('template')!r} (삭제된 것 같음)")
+    except Exception as e:
+        applog.exc("팔레트 블럭 ref 마이그레이션 실패", e)
     return False
 
 
