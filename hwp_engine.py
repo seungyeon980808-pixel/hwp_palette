@@ -866,7 +866,7 @@ def execute_function_block(actions):
 def run_block(block, template_path_fn=None):
     """팔레트 블럭 하나를 실행한다. 종류에 따라 삽입/적용 분기.
 
-    template_path_fn: 템플릿 이름 → 조각 파일 경로 (library.template_path 등).
+    template_path_fn: 블럭 → 조각 파일 경로 (없으면 None).
     반환: (성공여부, 상태메시지)
     """
     btype = block.get("type")
@@ -881,10 +881,10 @@ def run_block(block, template_path_fn=None):
     if btype == "template":
         if template_path_fn is None:
             return False, "템플릿 경로를 찾을 수 없습니다"
-        name = block.get("template", "")
-        path = template_path_fn(name)
+        path = template_path_fn(block)
         if not path:
-            return False, f"템플릿을 찾을 수 없습니다: {name}"
+            return False, (f"템플릿을 찾을 수 없습니다: {block.get('template', '?')}"
+                           " (라이브러리에서 삭제된 것 같습니다)")
         anchor = hwp.GetPos()
         insert_fragment(path)
         # 팔레트로 넣을 땐 채울 내용이 없으므로 빈칸 표시(\)를 모두 청소

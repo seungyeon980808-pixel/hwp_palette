@@ -110,33 +110,50 @@ class MetaDialog(tk.Toplevel):
         body = tk.Frame(self, bg=BG, padx=16, pady=12)
         body.pack(fill="x")
 
+        # ── 이름만 물어본다. 라벨·분류는 대부분 기본값이면 충분하므로 접어둠 ──
         tk.Label(body, text="이름", font=(FONT, 9), bg=BG, fg=TEXT).grid(
             row=0, column=0, sticky="w", pady=3)
         self.name_var = tk.StringVar(value=name)
-        tk.Entry(body, textvariable=self.name_var, width=26, font=(FONT, 10),
-                 relief="solid", bd=1).grid(row=0, column=1, pady=3, padx=(8, 0))
+        name_entry = tk.Entry(body, textvariable=self.name_var, width=26,
+                              font=(FONT, 10), relief="solid", bd=1)
+        name_entry.grid(row=0, column=1, pady=3, padx=(8, 0))
+        name_entry.focus_set()
+        name_entry.bind("<Return>", lambda e: self._ok())
 
-        tk.Label(body, text="마크다운 라벨", font=(FONT, 9), bg=BG, fg=TEXT).grid(
-            row=1, column=0, sticky="w", pady=3)
         self.label_var = tk.StringVar(value=label)
-        tk.Entry(body, textvariable=self.label_var, width=26, font=(FONT, 10),
-                 relief="solid", bd=1).grid(row=1, column=1, pady=3, padx=(8, 0))
-        tk.Label(body, text=r"문서에 \라벨\ 로 쓰면 변환 시 이 항목이 들어갑니다."
-                            " 비우면 이름을 사용.",
-                 font=(FONT, 7), bg=BG, fg=MUTED, wraplength=250,
-                 justify="left").grid(row=2, column=1, sticky="w", padx=(8, 0))
-
-        tk.Label(body, text="분류", font=(FONT, 9), bg=BG, fg=TEXT).grid(
-            row=3, column=0, sticky="w", pady=3)
         self.group_var = tk.StringVar(value=library.DEFAULT_GROUP)
-        ttk.Combobox(body, textvariable=self.group_var, width=23,
-                     values=library.list_groups(), font=(FONT, 10)).grid(
-            row=3, column=1, pady=3, padx=(8, 0))
+        self._preview = tk.Label(body, text="", font=(FONT, 8), bg=BG, fg=ACCENT)
+        self._preview.grid(row=1, column=1, sticky="w", padx=(8, 0))
+        self.name_var.trace_add("write", lambda *a: self._update_preview())
+        self.label_var.trace_add("write", lambda *a: self._update_preview())
 
         if extra_note:
-            tk.Label(body, text=extra_note, font=(FONT, 8), bg=BG, fg=ACCENT,
-                     wraplength=300, justify="left").grid(
-                row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
+            tk.Label(body, text=extra_note, font=(FONT, 8), bg=BG, fg=MUTED,
+                     wraplength=320, justify="left").grid(
+                row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        # ── 자세히 (라벨·분류) — 필요할 때만 펼침 ──
+        self._adv_open = False
+        self._adv = tk.Frame(self, bg=BG, padx=16)
+        tk.Label(self._adv, text="마크다운 라벨", font=(FONT, 9), bg=BG,
+                 fg=TEXT).grid(row=0, column=0, sticky="w", pady=3)
+        tk.Entry(self._adv, textvariable=self.label_var, width=24,
+                 font=(FONT, 10), relief="solid", bd=1).grid(
+            row=0, column=1, pady=3, padx=(8, 0))
+        tk.Label(self._adv, text="비우면 이름을 그대로 씁니다.",
+                 font=(FONT, 7), bg=BG, fg=MUTED).grid(
+            row=1, column=1, sticky="w", padx=(8, 0))
+        tk.Label(self._adv, text="분류", font=(FONT, 9), bg=BG, fg=TEXT).grid(
+            row=2, column=0, sticky="w", pady=3)
+        ttk.Combobox(self._adv, textvariable=self.group_var, width=21,
+                     values=library.list_groups(), font=(FONT, 10)).grid(
+            row=2, column=1, pady=3, padx=(8, 0))
+
+        self._adv_btn = tk.Button(self, text="▸ 자세히 (라벨·분류)",
+                                  command=self._toggle_adv, font=(FONT, 8),
+                                  fg=MUTED, bg=BG, activebackground=BG,
+                                  bd=0, cursor="hand2", anchor="w")
+        self._adv_btn.pack(fill="x", padx=16)
 
         foot = tk.Frame(self, bg=BG, padx=16, pady=12)
         foot.pack(fill="x")
@@ -147,9 +164,25 @@ class MetaDialog(tk.Toplevel):
                   font=(FONT, 10), bg="#e8e8ed", fg=TEXT, bd=0,
                   padx=16, pady=6, cursor="hand2").pack(side="right", padx=(0, 6))
 
+        self._update_preview()
         self.update_idletasks()
         self.geometry(f"+{master.winfo_rootx()+40}+{master.winfo_rooty()+60}")
         self.grab_set()
+
+    def _toggle_adv(self):
+        if self._adv_open:
+            self._adv.pack_forget()
+            self._adv_btn.config(text="▸ 자세히 (라벨·분류)")
+        else:
+            self._adv.pack(fill="x", before=self._adv_btn)
+            self._adv_btn.config(text="▾ 자세히 (라벨·분류)")
+        self._adv_open = not self._adv_open
+
+    def _update_preview(self):
+        """문서에 어떻게 쓰는지 실물로 보여준다 (\\ 헷갈림 방지)."""
+        lab = library.normalize_label(self.label_var.get()) \
+            or library.normalize_label(self.name_var.get())
+        self._preview.config(text=f"문서에 이렇게 쓰세요:  \\{lab}\\" if lab else "")
 
     def _ok(self):
         name = self.name_var.get().strip()
@@ -382,15 +415,22 @@ class LibraryManager(tk.Toplevel):
                  bg=ROWBG, fg=MUTED, anchor="w", wraplength=260,
                  justify="left").pack(anchor="w")
 
+        # 더블클릭으로도 수정 (팔레트 블럭과 동일한 조작)
+        for w in (row, info):
+            w.bind("<Double-Button-1>", lambda e, c=cat, it=item: self._edit(c, it))
+
         btns = tk.Frame(row, bg=ROWBG, padx=8)
         btns.pack(side="right")
         action_label = "적용" if cat == "서식" else "삽입"
         tk.Button(btns, text=action_label, font=(FONT, 9), bg=ACCENT, fg="white",
                   bd=0, padx=10, pady=5, cursor="hand2",
                   command=lambda: self._act(cat, item)).pack(side="left", padx=2)
+        tk.Button(btns, text="✎", font=(FONT, 9), bg=CARD, fg=TEXT,
+                  bd=1, padx=8, pady=4, cursor="hand2",
+                  command=lambda: self._edit(cat, item)).pack(side="left", padx=2)
         tk.Button(btns, text="삭제", font=(FONT, 9), bg="#e8e8ed", fg=TEXT,
                   bd=0, padx=10, pady=5, cursor="hand2",
-                  command=lambda: self._delete(cat, item["name"])).pack(side="left", padx=2)
+                  command=lambda: self._delete(cat, item)).pack(side="left", padx=2)
 
     def _summary(self, cat, item):
         meta = f"\\{item.get('label', item['name'])}\\ · {item.get('group', library.DEFAULT_GROUP)}"
@@ -518,11 +558,33 @@ class LibraryManager(tk.Toplevel):
         except Exception as e:
             messagebox.showerror("오류", f"{type(e).__name__}: {e}", parent=self)
 
-    def _delete(self, cat, name):
-        if messagebox.askyesno("삭제", f"'{name}' 항목을 삭제할까요?", parent=self):
-            library.delete_item(cat, name)
+    def _delete(self, cat, item):
+        name = item["name"]
+        used = library.count_palette_refs(cat, item["id"])
+        msg = f"'{name}' 항목을 삭제할까요?"
+        if used:
+            msg += (f"\n\n⚠ 팔레트 {used}곳에서 사용 중입니다."
+                    "\n   그 블럭들도 함께 삭제됩니다.")
+        if messagebox.askyesno("삭제", msg, parent=self):
+            library.delete_item(cat, item["id"])
             self._refresh(cat)
             self._notify()
+
+    def _edit(self, cat, item):
+        """등록된 항목의 이름·라벨·분류 수정 (id 유지 → 팔레트 연결 안 깨짐)."""
+        meta = MetaDialog(self, title=f"{cat} 수정", name=item["name"],
+                          label=item.get("label", ""))
+        try:
+            meta.group_var.set(item.get("group", library.DEFAULT_GROUP))
+        except Exception:
+            pass
+        self.wait_window(meta)
+        if not meta.result:
+            return
+        name, label, group = meta.result
+        library.update_item(cat, item["id"], name=name, label=label, group=group)
+        self._refresh(cat)
+        self._notify()
 
     def _notify(self):
         if self.on_saved:

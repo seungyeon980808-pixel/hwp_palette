@@ -395,7 +395,12 @@ class SettingsWindow(tk.Toplevel):
             v = blk.get("value", "")
             return v if len(v) <= 20 else v[:20] + "…"
         if blk["type"] == "template":
-            return blk.get("template", "?")
+            # 라이브러리의 '현재' 이름을 보여준다 (이름을 바꿔도 따라가게)
+            it = library.get_item("템플릿", item_id=blk.get("ref"),
+                                  name=blk.get("template"))
+            if it:
+                return it["name"]
+            return f"{blk.get('template', '?')} (삭제됨)"
         return blk.get("name", " + ".join(a["func"] for a in blk.get("actions", [])))
 
     # ── 드래그 이동 + 선택 ──
@@ -501,7 +506,9 @@ class SettingsWindow(tk.Toplevel):
             pick = _ChoiceDialog(self, "템플릿 변경", [it["name"] for it in items])
             self.wait_window(pick)
             if pick.result:
-                blk["template"] = pick.result
+                it = next(x for x in items if x["name"] == pick.result)
+                blk["ref"] = it["id"]
+                blk["template"] = it["name"]
                 palette.update_block(self.sel_tab, idx, blk)
         else:  # function
             dlg = FunctionDialog(self, block=blk)
@@ -538,21 +545,73 @@ class SettingsWindow(tk.Toplevel):
             self._notify()
 
     def _add_template(self):
+        """템플릿 블럭 추가 — 지금 한글에서 바로 캡처하거나, 등록된 것에서 고른다."""
         if not self._need_tab():
             return
         items = library.list_items("템플릿")
-        if not items:
-            messagebox.showinfo("템플릿 없음",
-                "먼저 📚 라이브러리에서 템플릿을 등록해주세요.", parent=self)
+        choice = _SourceDialog(self, has_registered=bool(items))
+        self.wait_window(choice)
+        if choice.result == "capture":
+            self._capture_template_here()
+        elif choice.result == "registered":
+            pick = _ChoiceDialog(self, "템플릿 선택", [it["name"] for it in items])
+            self.wait_window(pick)
+            if pick.result:
+                it = next(x for x in items if x["name"] == pick.result)
+                self._add_template_block(it)
+
+    def _capture_template_here(self):
+        """한글의 현재 선택(또는 커서가 든 표)을 그 자리에서 템플릿으로 등록 + 배치."""
+        try:
+            hwp_engine.connect()
+        except Exception as e:
+            messagebox.showerror("연결 실패", f"한글을 먼저 실행해주세요.\n{e}", parent=self)
             return
-        names = [it["name"] for it in items]
-        pick = _ChoiceDialog(self, "템플릿 선택", names)
-        self.wait_window(pick)
-        if pick.result:
-            palette.add_block(self.sel_tab,
-                              {"type": "template", "template": pick.result, "span": 2})
-            self._render_blocks()
-            self._notify()
+        if not hwp_engine.has_selection():
+            if not hwp_engine.auto_select_table_if_inside():
+                messagebox.showwarning("선택 없음",
+                    "한글에서 템플릿으로 저장할 영역을 드래그로 선택하거나,\n"
+                    "표를 저장하려면 표 안을 클릭만 해둬도 됩니다.", parent=self)
+                return
+        captured = hwp_engine.read_selection_text(retries=6)
+        slot_count = captured.count("\\")
+        if slot_count:
+            note = (f"빈칸(\\) {slot_count}개 발견 — 변환 시 아랫줄 {slot_count}줄이"
+                    " 순서대로 채워집니다. (비울 칸엔 '-')")
+        elif "/" in captured:
+            note = ("⚠ 빈칸이 없습니다. 혹시 슬래시(/)를 쓰셨나요?\n"
+                    "   빈칸은 역슬래시(\\) — 한글에서 ₩ 로 보이는 그 키입니다.")
+        else:
+            note = "빈칸(\\)이 없습니다. 글자 들어갈 자리에 \\ 를 넣어두면 채울 수 있습니다."
+
+        meta = MetaDialog(self, title="템플릿 등록", extra_note=note)
+        self.wait_window(meta)
+        if not meta.result:
+            return
+        name, label, group = meta.result
+        library.FRAGMENTS_DIR.mkdir(exist_ok=True)
+        tmp = library.FRAGMENTS_DIR / f"_tmp_{int(time.time()*1000)}.hwp"
+        try:
+            hwp_engine.capture_fragment(tmp)
+            item_id = library.add_template_from_capture(
+                name, tmp, label=label, group=group, slot_count=slot_count)
+        except Exception as e:
+            messagebox.showerror("캡처 실패", str(e), parent=self)
+            return
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._add_template_block(library.find_by_id("템플릿", item_id))
+
+    def _add_template_block(self, item):
+        if not item:
+            return
+        palette.add_block(self.sel_tab, {"type": "template", "ref": item["id"],
+                                         "template": item["name"], "span": 2})
+        self._render_blocks()
+        self._notify()
 
     def _add_function(self):
         if not self._need_tab():
@@ -577,6 +636,50 @@ class SettingsWindow(tk.Toplevel):
     def _notify(self):
         if self.on_saved:
             self.on_saved()
+
+
+class _SourceDialog(tk.Toplevel):
+    """템플릿 블럭을 어디서 가져올지 — 지금 캡처 vs 이미 등록된 것."""
+
+    def __init__(self, master, has_registered=True):
+        super().__init__(master)
+        self.result = None
+        self.title("템플릿 추가")
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+
+        tk.Label(self, text="템플릿을 어디서 가져올까요?", font=(FONT, 11, "bold"),
+                 bg=BG, fg=TEXT).pack(anchor="w", padx=16, pady=(14, 8))
+
+        body = tk.Frame(self, bg=BG, padx=16)
+        body.pack(fill="x")
+        tk.Button(body, text="📸  지금 한글에서 캡처해서 추가",
+                  command=lambda: self._pick("capture"),
+                  font=(FONT, 10, "bold"), bg=ACCENT, fg="white", bd=0,
+                  pady=10, cursor="hand2").pack(fill="x")
+        tk.Label(body, text="한글에서 표·영역을 선택해두고 누르세요. 등록과 배치가 한 번에.",
+                 font=(FONT, 8), bg=BG, fg=MUTED).pack(anchor="w", pady=(3, 10))
+
+        state = "normal" if has_registered else "disabled"
+        tk.Button(body, text="📚  이미 등록된 템플릿에서 고르기",
+                  command=lambda: self._pick("registered"),
+                  font=(FONT, 10), bg=CARD, fg=TEXT, bd=1, pady=8,
+                  cursor="hand2", state=state).pack(fill="x")
+        if not has_registered:
+            tk.Label(body, text="(아직 등록된 템플릿이 없습니다)",
+                     font=(FONT, 8), bg=BG, fg=MUTED).pack(anchor="w", pady=(3, 0))
+
+        tk.Button(self, text="취소", command=self.destroy, font=(FONT, 9),
+                  bg=BG, fg=MUTED, bd=0, cursor="hand2").pack(pady=10)
+
+        self.update_idletasks()
+        self.geometry(f"+{master.winfo_rootx()+50}+{master.winfo_rooty()+50}")
+        self.grab_set()
+
+    def _pick(self, what):
+        self.result = what
+        self.destroy()
 
 
 class _ChoiceDialog(tk.Toplevel):

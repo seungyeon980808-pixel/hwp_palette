@@ -220,15 +220,10 @@ def fn_pick_photo():
         messagebox.showerror("오류", f"{type(e).__name__}: {e}")
 
 
-def _template_item_by_name(name):
-    for it in library.list_items("템플릿"):
-        if it["name"] == name:
-            return it
-    return None
-
-
-def _template_path_by_name(name):
-    it = _template_item_by_name(name)
+def _template_path_by_ref(block):
+    """블럭이 가리키는 템플릿의 조각 경로. ref(id) 우선, 없으면 이름(구 데이터)."""
+    it = library.get_item("템플릿", item_id=block.get("ref"),
+                          name=block.get("template"))
     return library.template_path(it) if it else None
 
 
@@ -237,7 +232,7 @@ def run_palette_block(block):
     if not ensure_hwp(): return
     try:
         ok, msg = hwp_engine.run_block(
-            block, template_path_fn=_template_path_by_name)
+            block, template_path_fn=_template_path_by_ref)
         status_var.set(("✅ " if ok else "⚠ ") + msg)
     except Exception as e:
         status_var.set(f"오류: {type(e).__name__}: {e}")

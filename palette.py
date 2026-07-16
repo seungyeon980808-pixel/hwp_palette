@@ -48,12 +48,36 @@ def load_tabs():
         tabs = _seed_tabs()
         save_tabs(tabs)
     # 하위호환 기본값
+    migrated = False
     for t in tabs:
         t.setdefault("cols", DEFAULT_COLS)
         t.setdefault("blocks", [])
         for b in t["blocks"]:
             b.setdefault("span", 2 if b.get("type") == "template" else 1)
+            # 구 데이터: 템플릿을 '이름'으로 참조 → 고유 id(ref)로 이전.
+            # 이름으로 참조하면 이름 변경/중복 시 연결이 끊긴다.
+            if (b.get("type") == "template" and not b.get("ref")
+                    and b.get("template") and _migrate_template_ref(b)):
+                migrated = True
+    if migrated:
+        save_tabs(tabs)
     return tabs
+
+
+def _migrate_template_ref(block):
+    """{'template': '결재란'} → {'ref': <id>} 로 이전. 성공 시 True.
+
+    library 를 최상위에서 import 하면 순환 참조라 지역 import.
+    """
+    try:
+        import library
+        for it in library.load().get("템플릿", []):
+            if it.get("name") == block.get("template"):
+                block["ref"] = it["id"]
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def save_tabs(tabs):
