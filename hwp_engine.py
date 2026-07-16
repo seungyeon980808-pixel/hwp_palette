@@ -641,6 +641,35 @@ def insert_fragment(path):
     hwp.insert_file(str(path), keep_section=0)
 
 
+def find_text(query, direction="Forward"):
+    r"""문서에서 문자열을 찾아 선택한다. 없으면 False.
+
+    pyhwpx의 hwp.find()를 쓰지 않는 이유 (실측 2026-07-16):
+      1) 내부에서 HAction.Execute("FindDlg", ...) 로 '찾기 대화상자'를 실제 실행함.
+      2) SetMessageBoxMode(0x2FFF1) 로 바꾼 뒤 finally에서 원래값이 아니라
+         0xFFFFF 를 강제 세팅해, 한글의 대화상자 처리 모드가 0x0 → 0xFFFFF 로
+         영구히 바뀜 (변환할 때 '창 모드가 변하는' 증상의 원인).
+    RepeatFind 만 쓰면 대화상자도 안 뜨고 모드도 그대로다(0x0 유지 실측 확인).
+    """
+    act = hwp.HAction
+    pset = hwp.HParameterSet.HFindReplace
+    act.GetDefault("RepeatFind", pset.HSet)
+    pset.MatchCase = 1
+    pset.SeveralWords = 0
+    pset.UseWildCards = 0
+    pset.WholeWordOnly = 0
+    pset.AutoSpell = 1
+    pset.Direction = hwp.FindDir(direction)
+    pset.FindString = query
+    pset.IgnoreMessage = 1
+    pset.HanjaFromHangul = 1
+    pset.AllWordForms = 0
+    pset.FindJaso = 0
+    pset.FindRegExp = 0
+    pset.FindType = 1
+    return bool(act.Execute("RepeatFind", pset.HSet))
+
+
 def strip_slot_markers(anchor_pos):
     r"""anchor_pos부터 문서 끝까지의 빈칸 표시(\)를 제거한다.
 
@@ -650,7 +679,7 @@ def strip_slot_markers(anchor_pos):
     act = hwp.HAction
     hwp.SetPos(*anchor_pos)
     for _ in range(200):
-        if not hwp.find("\\", direction="Forward"):
+        if not find_text("\\"):
             break
         act.Run("Delete")
 
@@ -852,7 +881,7 @@ def execute_library_plan(ops, template_path_fn):
     for idx, (_, item, fills) in enumerate(templates):
         marker = marker_base + str(idx) + "◈"
         hwp.MoveDocBegin()
-        if not hwp.find(marker, direction="Forward"):
+        if not find_text(marker):
             continue                        # 마커 유실 — 이 템플릿은 건너뜀
         delete_selection()
         anchor = hwp.GetPos()
@@ -860,7 +889,7 @@ def execute_library_plan(ops, template_path_fn):
         # 빈칸 \ 를 위에서부터 차례로. 값이 None('-')이면 그 칸은 비워둔다.
         hwp.SetPos(*anchor)
         for value in fills:
-            if not hwp.find("\\", direction="Forward"):
+            if not find_text("\\"):
                 break
             if value is None:
                 act.Run("Delete")           # 건너뛰기 — 빈칸만 지움
