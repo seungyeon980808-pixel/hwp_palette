@@ -165,10 +165,17 @@ def fn_convert():
             lookup = library.label_lookup()
             ops, warns = md_parser.build_library_plan(selected, lookup)
             hwp_engine.delete_selection()
-            result = hwp_engine.execute_library_plan(ops, library.template_path)
+            result = hwp_engine.execute_library_plan(
+                ops, library.template_path, form_path_fn=library.template_path)
             hwp_engine._diag("fn_convert: execute_library_plan 후")
-            msg = (f"✅ 라이브러리 변환: 템플릿 {result['templates']}개, "
-                   f"빈칸 {result['slots_filled']}개")
+            if result.get("error"):
+                messagebox.showerror("변환 실패", result["error"])
+                return
+            if result.get("forms"):
+                msg = f"✅ 양식 열기 완료 (빈칸 {result['slots_filled']}개 채움)"
+            else:
+                msg = (f"✅ 라이브러리 변환: 템플릿 {result['templates']}개, "
+                       f"빈칸 {result['slots_filled']}개")
             if warns:
                 messagebox.showwarning("변환 주의", "\n".join(warns[:8]))
             status_var.set(msg)
@@ -228,12 +235,20 @@ def _template_path_by_ref(block):
     return library.template_path(it) if it else None
 
 
+def _form_path_by_ref(block):
+    """블럭/항목이 가리키는 양식 파일 경로."""
+    it = library.get_item("양식", item_id=block.get("ref") or block.get("id"),
+                          name=block.get("form") or block.get("name"))
+    return library.template_path(it) if it else None
+
+
 def run_palette_block(block):
     """팔레트 블럭 클릭 — 종류에 따라 삽입/적용."""
     if not ensure_hwp(): return
     try:
         ok, msg = hwp_engine.run_block(
-            block, template_path_fn=_template_path_by_ref)
+            block, template_path_fn=_template_path_by_ref,
+            form_path_fn=_form_path_by_ref)
         status_var.set(("✅ " if ok else "⚠ ") + msg)
     except Exception as e:
         status_var.set(f"오류: {type(e).__name__}: {e}")

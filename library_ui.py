@@ -13,7 +13,7 @@
 import pathlib
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import hwp_engine
 import library
@@ -31,11 +31,13 @@ FONT = "맑은 고딕"
 TAB_DESC = {
     "서식": "굵기·색상·자간 등 글자 서식 일부만 저장해 아무 글자에나 입히는 기능",
     "문자": "특수문자나 자주 쓰는 문구를 저장해 바로 삽입하는 기능",
-    "템플릿": "표·결재란처럼 완성된 덩어리를 통째로 저장해 그대로 꽂아 넣는 기능",
+    "템플릿": "표·결재란처럼 문서 '일부'를 저장해 커서 자리에 꽂아 넣는 기능",
+    "양식": "hwp 파일 '전체'를 저장해 새 문서로 여는 기능 "
+            "(용지·여백·머리말까지 그대로 — 표지·통신문용)",
     "내장": "등록 없이 바로 쓰는 기본 기호. 문서에 \\원1\\ \\로마3\\ \\홑낫표\\ 로 호출",
 }
 
-TABS = ("서식", "문자", "템플릿", "내장")
+TABS = ("서식", "문자", "템플릿", "양식", "내장")
 
 
 def _ensure_hwp(parent):
@@ -312,6 +314,10 @@ class LibraryManager(tk.Toplevel):
             self.add_btn.config(text="+ 지금 선택 영역을 템플릿으로 저장",
                                  command=self._add_template)
             self.add_btn.pack(fill="x", padx=16)
+        elif cat == "양식":
+            self.add_btn.config(text="+ hwp 파일을 양식으로 등록",
+                                 command=self._add_form)
+            self.add_btn.pack(fill="x", padx=16)
         else:  # 내장 — 추가 불가(읽기 전용)
             self.add_btn.pack_forget()
         # 내장 탭은 분류 필터 대신 검색만 사용
@@ -421,7 +427,7 @@ class LibraryManager(tk.Toplevel):
 
         btns = tk.Frame(row, bg=ROWBG, padx=8)
         btns.pack(side="right")
-        action_label = "적용" if cat == "서식" else "삽입"
+        action_label = {"서식": "적용", "양식": "열기"}.get(cat, "삽입")
         tk.Button(btns, text=action_label, font=(FONT, 9), bg=ACCENT, fg="white",
                   bd=0, padx=10, pady=5, cursor="hand2",
                   command=lambda: self._act(cat, item)).pack(side="left", padx=2)
@@ -540,6 +546,44 @@ class LibraryManager(tk.Toplevel):
         self._refresh("템플릿")
         self._notify()
 
+    # ── 양식 ─────────────────────────────────────────
+    def _add_form(self):
+        """hwp 파일을 통째로 양식으로 등록 (한글을 안 열어도 됨)."""
+        path = filedialog.askopenfilename(
+            title="양식으로 등록할 한글 파일 선택",
+            filetypes=[("한글 파일", "*.hwp *.hwpx"), ("모든 파일", "*.*")],
+            parent=self)
+        if not path:
+            return
+        # 빈칸(\) 개수 세기 — 한글로 열어서 확인 (실패해도 등록은 진행)
+        slot_count = 0
+        try:
+            hwp_engine.connect()
+            slot_count = hwp_engine.count_slots_in_file(path)
+        except Exception:
+            pass
+        if slot_count:
+            note = (f"빈칸(\\) {slot_count}개 발견 — \\라벨\\ 변환 시 아랫줄 "
+                    f"{slot_count}줄이 순서대로 채워집니다. (비울 칸엔 '-')")
+        else:
+            note = ("빈칸(\\)이 없습니다. 양식에 \\ 를 넣어두면 변환 때 채울 수 있습니다.\n"
+                    "지금 등록해도 '새 문서로 열기'는 됩니다.")
+        default_name = pathlib.Path(path).stem
+        meta = MetaDialog(self, title="양식 등록", name=default_name,
+                          extra_note=note)
+        self.wait_window(meta)
+        if not meta.result:
+            return
+        name, label, group = meta.result
+        try:
+            library.add_form_from_file(name, path, label=label, group=group,
+                                       slot_count=slot_count)
+        except Exception as e:
+            messagebox.showerror("등록 실패", str(e), parent=self)
+            return
+        self._refresh("양식")
+        self._notify()
+
     # ── 공통: 적용/삽입 · 삭제 ───────────────────────
     def _act(self, cat, item):
         if not _ensure_hwp(self):
@@ -553,6 +597,8 @@ class LibraryManager(tk.Toplevel):
                 hwp_engine.apply_charshape_delta(item["fields"])
             elif cat == "문자":
                 hwp_engine.insert_plain(item["text"])
+            elif cat == "양식":
+                hwp_engine.open_form(library.template_path(item))
             else:
                 hwp_engine.insert_fragment(library.template_path(item))
         except Exception as e:

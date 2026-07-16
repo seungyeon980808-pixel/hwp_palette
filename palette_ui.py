@@ -27,7 +27,7 @@ BORDER = "#d2d2d7"
 ROWBG = "#fafafa"
 FONT = "맑은 고딕"
 
-TYPE_LABEL = {"char": "문자", "template": "템플릿", "function": "기능"}
+TYPE_LABEL = {"char": "문자", "template": "템플릿", "function": "기능", "form": "양식"}
 
 
 def _rgb_int(r, g, b):
@@ -227,6 +227,9 @@ class SettingsWindow(tk.Toplevel):
                   cursor="hand2").pack(side="left", padx=(0, 4))
         tk.Button(addbar, text="+ 기능", command=self._add_function, font=(FONT, 9),
                   bg="#e8e8ed", fg=TEXT, bd=0, padx=10, pady=5,
+                  cursor="hand2").pack(side="left", padx=(0, 4))
+        tk.Button(addbar, text="+ 양식", command=self._add_form, font=(FONT, 9),
+                  bg="#e8e8ed", fg=TEXT, bd=0, padx=10, pady=5,
                   cursor="hand2").pack(side="left")
 
         self.block_area = tk.Frame(right, bg=BG)
@@ -367,8 +370,8 @@ class SettingsWindow(tk.Toplevel):
 
     def _make_tile(self, parent, i, blk):
         selected = (self.sel_block == i)
-        bg = {"char": CARD, "template": "#eef4ff", "function": "#fff4e6"}.get(
-            blk["type"], CARD)
+        bg = {"char": CARD, "template": "#eef4ff", "function": "#fff4e6",
+              "form": "#eafaf1"}.get(blk["type"], CARD)
         tile = tk.Frame(parent, bg=bg, height=42,
                         highlightbackground=ACCENT if selected else BORDER,
                         highlightthickness=2 if selected else 1)
@@ -386,7 +389,8 @@ class SettingsWindow(tk.Toplevel):
         return tile
 
     def _tile_text(self, blk):
-        pre = {"template": "▦ ", "function": "ƒ "}.get(blk["type"], "")
+        pre = {"template": "▦ ", "function": "ƒ ", "form": "📄 "}.get(
+            blk["type"], "")
         s = pre + self._block_label(blk)
         return s if len(s) <= 12 else s[:12] + "…"
 
@@ -394,13 +398,15 @@ class SettingsWindow(tk.Toplevel):
         if blk["type"] == "char":
             v = blk.get("value", "")
             return v if len(v) <= 20 else v[:20] + "…"
-        if blk["type"] == "template":
+        if blk["type"] in ("template", "form"):
             # 라이브러리의 '현재' 이름을 보여준다 (이름을 바꿔도 따라가게)
-            it = library.get_item("템플릿", item_id=blk.get("ref"),
-                                  name=blk.get("template"))
+            cat = "양식" if blk["type"] == "form" else "템플릿"
+            key = "form" if blk["type"] == "form" else "template"
+            it = library.get_item(cat, item_id=blk.get("ref"),
+                                  name=blk.get(key))
             if it:
                 return it["name"]
-            return f"{blk.get('template', '?')} (삭제됨)"
+            return f"{blk.get(key, '?')} (삭제됨)"
         return blk.get("name", " + ".join(a["func"] for a in blk.get("actions", [])))
 
     # ── 드래그 이동 + 선택 ──
@@ -620,6 +626,27 @@ class SettingsWindow(tk.Toplevel):
         self.wait_window(dlg)
         if dlg.result:
             palette.add_block(self.sel_tab, dlg.result)
+            self._render_blocks()
+            self._notify()
+
+    def _add_form(self):
+        """양식 블럭 추가 — 라이브러리에 등록된 양식에서 고른다."""
+        if not self._need_tab():
+            return
+        items = library.list_items("양식")
+        if not items:
+            messagebox.showinfo(
+                "양식 없음",
+                "먼저 📚 라이브러리 → 양식 탭에서 hwp 파일을 등록해주세요.\n\n"
+                "양식은 '새 문서로 열기'용입니다 (표지·통신문처럼\n"
+                "용지·여백·머리말까지 그대로 시작할 때).", parent=self)
+            return
+        pick = _ChoiceDialog(self, "양식 선택", [it["name"] for it in items])
+        self.wait_window(pick)
+        if pick.result:
+            it = next(x for x in items if x["name"] == pick.result)
+            palette.add_block(self.sel_tab, {"type": "form", "ref": it["id"],
+                                             "form": it["name"], "span": 2})
             self._render_blocks()
             self._notify()
 

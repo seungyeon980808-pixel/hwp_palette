@@ -140,7 +140,8 @@ def build_library_plan(text, lookup):
     lookup: {라벨: (분류명, 항목dict)} — library.label_lookup() 결과.
     반환: (ops, warnings)
       ops: ('line', 텍스트) — 그대로 삽입할 한 줄
-           ('template', 항목, [줄들]) — 템플릿 삽입 + 빈칸(\)에 순서대로 채움.
+           ('template', 항목, [줄들]) — 템플릿을 커서에 삽입 + 빈칸(\) 순서대로 채움
+           ('form', 항목, [줄들])     — 양식을 새 문서로 열고 + 빈칸 채움
              줄이 '-' 하나면 그 빈칸은 건너뛴다(비워둠).
     """
     ops, warnings = [], []
@@ -152,7 +153,9 @@ def build_library_plan(text, lookup):
         if m:
             label = m.group(1).strip()
             entry = lookup.get(label)
-            if entry and entry[0] == '템플릿':
+            # 템플릿(삽입)과 양식(새 문서로 열기) — 빈칸 채우는 방식은 같다
+            if entry and entry[0] in ('템플릿', '양식'):
+                kind = 'form' if entry[0] == '양식' else 'template'
                 item = entry[1]
                 slot_count = int(item.get('slot_count') or 0)
                 fills = []
@@ -169,7 +172,7 @@ def build_library_plan(text, lookup):
                     else:
                         fills.append(_replace_char_tokens(lines[j], lookup, warnings))
                     j += 1
-                ops.append(('template', item, fills))
+                ops.append((kind, item, fills))
                 i = j
                 continue
         ops.append(('line', _replace_char_tokens(lines[i], lookup, warnings)))

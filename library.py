@@ -1,26 +1,34 @@
 # -*- coding: utf-8 -*-
-"""개인 라이브러리 저장소 — 서식 / 문자 / 템플릿 3종.
+"""개인 라이브러리 저장소 — 서식 / 문자 / 템플릿 / 양식 4종.
 
 - 서식: 굵기·색상·자간 등 글자 서식 일부만 저장해 아무 글자에나 입히는 "델타"
 - 문자: 특수문자·상용구 등 텍스트 그대로 저장해 삽입
-- 템플릿: 표·결재란처럼 완성된 덩어리를 통째로 조각 파일(.hwp)로 저장해 삽입
+- 템플릿: 표·결재란처럼 문서 '일부'를 조각 파일(.hwp)로 저장해 커서 위치에 삽입
+- 양식: .hwp 파일 '전체'를 저장해 새 문서로 열기 (용지·여백·머리말까지 그대로)
 
 library.json에 목록/이름/값을 저장한다(개인 파일, git 추적 제외).
-템플릿의 실제 내용은 fragments/ 폴더에 개별 .hwp 조각으로 저장하고,
+템플릿·양식의 실제 내용은 fragments/ 폴더에 개별 .hwp 로 저장하고,
 library.json에는 그 파일명만 참조로 남긴다.
 """
 
 import copy
 import json
 import pathlib
+import shutil
 import uuid
 
 LIBRARY_PATH = pathlib.Path(__file__).parent / "library.json"
 FRAGMENTS_DIR = pathlib.Path(__file__).parent / "fragments"
 
-CATEGORIES = ("서식", "문자", "템플릿")
+CATEGORIES = ("서식", "문자", "템플릿", "양식")
 
-_EMPTY = {"서식": [], "문자": [], "템플릿": []}
+_EMPTY = {"서식": [], "문자": [], "템플릿": [], "양식": []}
+
+# 조각 파일(.hwp)을 갖는 분류 — 삭제 시 파일도 함께 지운다
+_FILE_CATEGORIES = ("템플릿", "양식")
+
+# 라이브러리 분류 → 팔레트 블럭 타입 (고아 블럭 정리·사용처 카운트용)
+_BLOCK_TYPE = {"템플릿": "template", "서식": "style", "문자": "char", "양식": "form"}
 
 
 def _ensure_dirs():
@@ -50,7 +58,7 @@ def load():
             it.setdefault("group", DEFAULT_GROUP)
             # 이미 \라벨\ 로 저장돼 있던 항목도 알맹이로 교정 (조회 실패 방지)
             it["label"] = normalize_label(it.get("label")) or it.get("name", "")
-            if cat == "템플릿":
+            if cat in _FILE_CATEGORIES:
                 it.setdefault("slot_count", 0)
                 it.pop("slot_names", None)   # 이름 빈칸 기능 폐지 (2026-07-16)
     if migrated:
@@ -156,6 +164,28 @@ def add_template_from_capture(name, fragment_src_path, label=None, group=None,
     return item["id"]
 
 
+def add_form_from_file(name, src_path, label=None, group=None, slot_count=0):
+    r"""양식(.hwp 파일 통째)을 등록한다.
+
+    템플릿과의 차이:
+      템플릿 = 문서 '일부'를 캡처해 커서 위치에 꽂는 것 (페이지 설정은 안 따라옴)
+      양식   = 파일 '전체'를 새 문서로 여는 것 (용지·여백·머리말까지 그대로)
+    표지·가정통신문처럼 "이 양식으로 새로 시작"하는 경우에 쓴다.
+    원본 파일과 무관하게 fragments/ 로 복사하므로 원본을 지워도 남는다.
+    """
+    _ensure_dirs()
+    data = load()
+    item = _meta(_unique_name(data["양식"], name), label, group)
+    fname = f"{uuid.uuid4().hex}.hwp"
+    shutil.copy2(str(src_path), str(FRAGMENTS_DIR / fname))
+    item["file"] = fname
+    item["slot_count"] = int(slot_count or 0)
+    item["origin"] = str(src_path)      # 어디서 가져왔는지 (참고용)
+    data["양식"].append(item)
+    save(data)
+    return item["id"]
+
+
 def update_item(category, item_id, name=None, label=None, group=None):
     """등록된 항목의 이름·라벨·분류를 수정한다 (id는 유지 → 팔레트 연결 안 깨짐)."""
     data = load()
@@ -242,7 +272,7 @@ def delete_item(category, item_id):
     target = next((it for it in items if it.get("id") == item_id), None)
     if target is None:
         return False
-    if category == "템플릿":
+    if category in _FILE_CATEGORIES:
         try:
             (FRAGMENTS_DIR / target["file"]).unlink(missing_ok=True)
         except OSError:
@@ -262,7 +292,7 @@ def _purge_palette_refs(category, item_id):
         import palette
     except ImportError:
         return
-    btype = {"템플릿": "template", "서식": "style", "문자": "char"}.get(category)
+    btype = _BLOCK_TYPE.get(category)
     if btype is None:
         return
     try:
@@ -287,7 +317,7 @@ def count_palette_refs(category, item_id):
         tabs = palette.load_tabs()
     except Exception:
         return 0
-    btype = {"템플릿": "template", "서식": "style", "문자": "char"}.get(category)
+    btype = _BLOCK_TYPE.get(category)
     if btype is None:
         return 0
     return sum(1 for tab in tabs for b in tab.get("blocks", [])

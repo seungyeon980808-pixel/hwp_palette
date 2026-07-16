@@ -533,10 +533,41 @@ def execute_function_block(actions):
         act.Execute("ParagraphShape", ps.HParaShape.HSet)
 
 
-def run_block(block, template_path_fn=None):
+def count_slots_in_file(path):
+    r"""hwp 파일 안의 빈칸(\) 개수를 센다 (양식 등록 시 안내용).
+
+    현재 열려 있는 문서를 건드리지 않으려고 별도 창에서 열었다 닫는다.
+    """
+    saved = hwp.XHwpDocuments.Count
+    try:
+        hwp.XHwpDocuments.Add(1)          # 1 = 새 탭으로 열기
+        hwp.open(str(path))
+        text = hwp.GetTextFile("TEXT", "") or ""
+        return text.count("\\")
+    finally:
+        try:
+            if hwp.XHwpDocuments.Count > saved:
+                hwp.XHwpDocuments.Active_XHwpDocument.Close(isDirty=False)
+        except Exception:
+            pass
+
+
+def open_form(path):
+    r"""양식 파일을 새 문서로 연다 (용지·여백·머리말까지 원본 그대로).
+
+    템플릿(insert_fragment)은 문서 '일부'를 커서 위치에 꽂는 것이라 페이지 설정이
+    안 따라온다. 표지·통신문처럼 "이 양식으로 새로 시작"하려면 파일 전체를 열어야
+    한다. 실측(2026-07-16): 여백 45/40 보존, 창 최대화도 유지됨.
+    """
+    hwp.FileNew()
+    hwp.open(str(path))
+
+
+def run_block(block, template_path_fn=None, form_path_fn=None):
     """팔레트 블럭 하나를 실행한다. 종류에 따라 삽입/적용 분기.
 
-    template_path_fn: 블럭 → 조각 파일 경로 (없으면 None).
+    template_path_fn: 블럭 → 템플릿 조각 경로 (커서 위치에 삽입)
+    form_path_fn:     블럭 → 양식 파일 경로 (새 문서로 열기)
     반환: (성공여부, 상태메시지)
     """
     btype = block.get("type")
@@ -560,6 +591,17 @@ def run_block(block, template_path_fn=None):
         # 팔레트로 넣을 땐 채울 내용이 없으므로 빈칸 표시(\)를 모두 청소
         strip_slot_markers(anchor)
         return True, "템플릿 삽입"
+    if btype == "form":
+        if form_path_fn is None:
+            return False, "양식 경로를 찾을 수 없습니다"
+        path = form_path_fn(block)
+        if not path:
+            return False, (f"양식을 찾을 수 없습니다: {block.get('form', '?')}"
+                           " (라이브러리에서 삭제된 것 같습니다)")
+        open_form(path)
+        # 새 문서로 연 것이므로 빈칸은 남겨둔다 — 사용자가 채우거나
+        # \라벨\ 변환으로 채운다.
+        return True, "양식 열기"
     return False, f"알 수 없는 블럭: {btype}"
 
 
@@ -602,8 +644,26 @@ def apply_default_format(fmt, text=None):
         insert_plain(text)
 
 
+def _fill_slots(anchor, fills):
+    """anchor 이후의 빈칸(\\)을 fills 로 위에서부터 채우고, 남은 건 청소.
+    반환: 실제로 채운 개수."""
+    act = hwp.HAction
+    filled = 0
+    hwp.SetPos(*anchor)
+    for value in fills:
+        if not find_text("\\"):
+            break
+        if value is None:
+            act.Run("Delete")               # '-' → 그 빈칸은 비움
+        else:
+            insert_plain(value)
+            filled += 1
+    strip_slot_markers(anchor)               # 안 채운 빈칸 표시 제거
+    return filled
+
+
 # ── 라이브러리: 마크다운(\라벨\) 변환 실행 ───────────────
-def execute_library_plan(ops, template_path_fn):
+def execute_library_plan(ops, template_path_fn, form_path_fn=None):
     """parser.build_library_plan()의 실행 계획을 문서에 반영한다.
 
     호출 전에 선택 영역은 삭제돼 있어야 한다(커서 = 삽입 지점).
@@ -612,9 +672,26 @@ def execute_library_plan(ops, template_path_fn):
     ② 마커를 찾아 조각으로 바꾸고, 이어서 빈칸(\\)을 아랫줄 내용으로 채움.
     한 번에 삽입하지 않는 이유: insert_file 직후 커서가 조각 뒤로 이동하지
     않아(실측) 순차 삽입 순서가 꼬이기 때문 — 마커 방식이 순서를 보장한다.
+
+    양식('form')은 성격이 달라 따로 처리한다 — 새 문서를 여는 것이라 마커를
+    심어둔 문서 자체가 사라진다. 그래서 계획에 양식이 있으면 그것만 처리한다.
     """
     import time as _time
     act = hwp.HAction
+
+    # ── 양식이 있으면: 새 문서로 열고 빈칸만 채운다 (마커 방식 안 씀) ──
+    form_op = next((o for o in ops if o[0] == "form"), None)
+    if form_op is not None:
+        _, item, fills = form_op
+        path = form_path_fn(item) if form_path_fn else None
+        if not path:
+            return {"templates": 0, "slots_filled": 0, "forms": 0,
+                    "error": f"양식 파일을 찾을 수 없습니다: {item.get('name', '?')}"}
+        open_form(path)
+        hwp.MoveDocBegin()
+        filled = _fill_slots(hwp.GetPos(), fills)
+        return {"templates": 0, "slots_filled": filled, "forms": 1}
+
     marker_base = "◈LIB%d_" % (int(_time.time() * 1000) % 10**9)
 
     # ① 텍스트/마커 순차 삽입
@@ -641,16 +718,5 @@ def execute_library_plan(ops, template_path_fn):
         delete_selection()
         anchor = hwp.GetPos()
         insert_fragment(template_path_fn(item))
-        # 빈칸 \ 를 위에서부터 차례로. 값이 None('-')이면 그 칸은 비워둔다.
-        hwp.SetPos(*anchor)
-        for value in fills:
-            if not find_text("\\"):
-                break
-            if value is None:
-                act.Run("Delete")           # 건너뛰기 — 빈칸만 지움
-            else:
-                insert_plain(value)
-                filled += 1
-        # 채우지 않고 남은 빈칸 표시(\) 청소 — 출력물에 남으면 안 됨
-        strip_slot_markers(anchor)
-    return {"templates": len(templates), "slots_filled": filled}
+        filled += _fill_slots(anchor, fills)
+    return {"templates": len(templates), "slots_filled": filled, "forms": 0}
