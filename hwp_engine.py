@@ -24,6 +24,36 @@ def set_active_spec(spec):
     S = spec
 
 
+# ── 진단 로거 (창 상태 추적용. 평소엔 꺼둠 — 문제 재현이 필요할 때만 True) ──
+DIAG = False
+_DIAG_PATH = None
+
+
+def _diag(tag):
+    """현재 한글 창 상태를 파일에 기록. 창을 바꾸는 범인을 찾기 위한 임시 도구."""
+    if not DIAG:
+        return
+    global _DIAG_PATH
+    try:
+        import os
+        import win32gui
+        if _DIAG_PATH is None:
+            _DIAG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "window_diag.log")
+            with open(_DIAG_PATH, "w", encoding="utf-8") as f:
+                f.write("=== 창 상태 추적 시작 ===\n")
+        lines = []
+        for h in _hwp_window_handles():
+            pl = win32gui.GetWindowPlacement(h)
+            rc = win32gui.GetWindowRect(h)
+            state = {1: "보통", 2: "최소", 3: "최대"}.get(pl[1], pl[1])
+            lines.append(f"{state} {rc[2]-rc[0]}x{rc[3]-rc[1]}")
+        with open(_DIAG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"[{tag}] {' | '.join(lines) if lines else '(창 없음)'}\n")
+    except Exception:
+        pass
+
+
 def _hwp_window_handles():
     """현재 떠 있는 한글 창 핸들 목록."""
     try:
@@ -34,7 +64,10 @@ def _hwp_window_handles():
 
     def _cb(hwnd, _):
         try:
-            if win32gui.IsWindowVisible(hwnd) and "hwp.exe" in win32gui.GetClassName(hwnd):
+            # 클래스명은 'HwndWrapper[Hwp.exe;;...]' — 대소문자가 환경마다 다르므로
+            # 반드시 소문자로 비교한다 (실측: Hwp.exe 로 나와 매칭 실패했던 버그)
+            if (win32gui.IsWindowVisible(hwnd)
+                    and "hwp.exe" in win32gui.GetClassName(hwnd).lower()):
                 found.append(hwnd)
         except Exception:
             pass
@@ -59,10 +92,12 @@ def connect():
     global hwp
     try:
         _ = hwp.Version
+        _diag("connect: 기존 연결 재사용")
         return hwp
     except Exception:
         pass
 
+    _diag("connect: 재연결 직전")
     try:
         import win32gui
         saved = [(h, win32gui.GetWindowPlacement(h)) for h in _hwp_window_handles()]
@@ -70,12 +105,14 @@ def connect():
         saved = []
 
     hwp = Hwp()
+    _diag("connect: Hwp() 생성 직후")
 
     for handle, placement in saved:
         try:
             win32gui.SetWindowPlacement(handle, placement)
         except Exception:
             pass
+    _diag(f"connect: 복원 시도 후 (저장했던 창 {len(saved)}개)")
     return hwp
 
 
@@ -682,7 +719,9 @@ def insert_fragment(path):
     keep_section=0 필수 — 조각에는 저장 당시의 구역(secd) 정의가 같이 담기는데,
     이를 유지(1)하면 구역 나눔이 일어나 표가 '다음 페이지'에 생성된다(실측 2026-07-15).
     """
+    _diag("insert_fragment: insert_file 직전")
     hwp.insert_file(str(path), keep_section=0)
+    _diag("insert_fragment: insert_file 직후  <<< 여기서 바뀌면 insert_file 범인")
 
 
 def find_text(query, direction="Forward"):
@@ -711,7 +750,9 @@ def find_text(query, direction="Forward"):
     pset.FindJaso = 0
     pset.FindRegExp = 0
     pset.FindType = 1
-    return bool(act.Execute("RepeatFind", pset.HSet))
+    r = bool(act.Execute("RepeatFind", pset.HSet))
+    _diag("find_text 후")
+    return r
 
 
 def strip_slot_markers(anchor_pos):

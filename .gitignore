@@ -21,3 +21,6 @@ build/
 # 임시 한글 파일
 ~$*.hwp
 ~$*.hwpx
+
+# 진단 로그
+window_diag.log

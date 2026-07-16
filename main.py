@@ -139,9 +139,12 @@ def fn_save():
 
 def fn_convert():
     """선택 영역 마크다운 변환 — 시험문제 문법 또는 라이브러리 \\라벨\\ 문법"""
+    hwp_engine._diag("fn_convert: 버튼 눌린 직후")
     if not ensure_hwp(): return
+    hwp_engine._diag("fn_convert: ensure_hwp 후")
     try:
         selected = read_selected_text()
+        hwp_engine._diag("fn_convert: read_selected_text(Copy) 후")
         if not selected or not selected.strip():
             messagebox.showwarning("선택 없음",
                 "한글에서 변환할 텍스트를 드래그로 선택해주세요.")
@@ -151,6 +154,7 @@ def fn_convert():
             # 시험문제 변환 (기존 동작)
             hwp_engine.delete_selection()
             should_increment = hwp_engine.insert_question(data, num_var.get(), num_use.get())
+            hwp_engine._diag("fn_convert: insert_question(시험문제 변환) 후")
             if should_increment:
                 num_var.set(num_var.get() + 1)
             status_var.set("✅ 변환 완료!")
@@ -161,6 +165,7 @@ def fn_convert():
             ops, warns = md_parser.build_library_plan(selected, lookup)
             hwp_engine.delete_selection()
             result = hwp_engine.execute_library_plan(ops, library.template_path)
+            hwp_engine._diag("fn_convert: execute_library_plan 후")
             msg = (f"✅ 라이브러리 변환: 템플릿 {result['templates']}개, "
                    f"빈칸 {result['slots_filled']}개")
             if warns:
