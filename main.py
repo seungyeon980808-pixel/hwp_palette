@@ -227,18 +227,12 @@ def _template_path_by_name(name):
     return library.template_path(it) if it else None
 
 
-def _template_slots_by_name(name):
-    it = _template_item_by_name(name)
-    return it.get("slot_names", []) if it else []
-
-
 def run_palette_block(block):
     """팔레트 블럭 클릭 — 종류에 따라 삽입/적용."""
     if not ensure_hwp(): return
     try:
         ok, msg = hwp_engine.run_block(
-            block, template_path_fn=_template_path_by_name,
-            slot_names_fn=_template_slots_by_name)
+            block, template_path_fn=_template_path_by_name)
         status_var.set(("✅ " if ok else "⚠ ") + msg)
     except Exception as e:
         status_var.set(f"오류: {type(e).__name__}: {e}")
@@ -322,7 +316,8 @@ GUIDE_TEXT = (
     "  \\라벨\\        → 문자·문구 삽입 / 템플릿 삽입\n"
     "  \\원1\\ \\로마3\\ → 내장 문자 (① Ⅲ …)\n"
     "  템플릿은 단독 줄로 쓰고, 아랫줄들이\n"
-    "  템플릿 속 빈칸 \\ 에 순서대로 채워집니다.\n"
+    "  템플릿 속 빈칸 \\ 에 위에서부터 순서대로 채워집니다.\n"
+    "  (비울 칸에는 '-' 한 줄)\n"
     "\n"
     "※ 변환할 부분을 드래그 → 마크다운 변환 (Ctrl+T)"
 )

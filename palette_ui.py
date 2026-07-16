@@ -111,7 +111,16 @@ class FunctionDialog(tk.Toplevel):
             return w, var
         if kind == "color":
             var = tk.StringVar(value="" if cur is None else str(cur))
-            swatch = tk.Label(parent, text="  ", bg="#000000", relief="solid", bd=1)
+            # 저장된 색(HWP는 R + G<<8 + B<<16)을 견본에 복원
+            cur_hex = "#000000"
+            if cur is not None:
+                try:
+                    v = int(cur)
+                    cur_hex = "#%02x%02x%02x" % (v & 0xFF, (v >> 8) & 0xFF,
+                                                 (v >> 16) & 0xFF)
+                except (TypeError, ValueError):
+                    pass
+            swatch = tk.Label(parent, text="  ", bg=cur_hex, relief="solid", bd=1)
             swatch.pack(side="left")
 
             def pick():
@@ -140,7 +149,8 @@ class FunctionDialog(tk.Toplevel):
                     messagebox.showwarning("값 없음", f"'{key}' 값을 입력해주세요.", parent=self)
                     return
                 try:
-                    val = float(raw) if key == "글씨크기" else int(float(raw))
+                    val = (float(raw) if key in func_catalog.FLOAT_KEYS
+                           else int(float(raw)))
                 except ValueError:
                     messagebox.showwarning("값 오류", f"'{key}' 값이 숫자가 아닙니다.", parent=self)
                     return
@@ -300,6 +310,7 @@ class SettingsWindow(tk.Toplevel):
         for w in self.block_area.winfo_children():
             w.destroy()
         self._tile_map = {}
+        self._tiles = {}
         tabs = palette.load_tabs()
         if not tabs:
             self.block_head.config(text="블럭")
@@ -365,6 +376,7 @@ class SettingsWindow(tk.Toplevel):
         lab = tk.Label(tile, text=self._tile_text(blk), bg=bg, fg=TEXT,
                        font=(FONT, 12 if blk["type"] == "char" else 9))
         lab.pack(expand=True)
+        self._tiles[i] = tile
         for w in (tile, lab):
             self._tile_map[str(w)] = i
             w.bind("<ButtonPress-1>", lambda e, idx=i: self._on_press(idx))
@@ -387,22 +399,37 @@ class SettingsWindow(tk.Toplevel):
         return blk.get("name", " + ".join(a["func"] for a in blk.get("actions", [])))
 
     # ── 드래그 이동 + 선택 ──
+    def _set_selection(self, idx):
+        """선택 표시를 '재렌더 없이' 그 자리에서 갱신.
+
+        release마다 _render_blocks()로 다시 그리면 타일 위젯이 파괴돼,
+        뒤이어 와야 할 <Double-Button-1>(수정)이 도달하지 못한다(실측 버그).
+        그래서 선택은 위젯 config만 바꾼다.
+        """
+        self.sel_block = idx
+        for i, tile in getattr(self, "_tiles", {}).items():
+            sel = (i == idx)
+            try:
+                tile.config(highlightbackground=ACCENT if sel else BORDER,
+                            highlightthickness=2 if sel else 1)
+            except Exception:
+                pass
+
     def _on_press(self, idx):
         self._drag_from = idx
-        self.sel_block = idx           # 재렌더는 release에서 (드래그 중 위젯 파괴 방지)
+        self._set_selection(idx)
 
     def _on_release(self, e):
         src = self._drag_from
         self._drag_from = None
-        moved = False
-        if src is not None:
-            target = self._widget_to_index(self.winfo_containing(e.x_root, e.y_root))
-            if target is not None and target != src:
-                palette.move_block_to(self.sel_tab, src, target)
-                self.sel_block = target
-                moved = True
-        self._render_blocks()          # 선택 표시 갱신
-        if moved:
+        if src is None:
+            return
+        target = self._widget_to_index(self.winfo_containing(e.x_root, e.y_root))
+        if target is not None and target != src:
+            # 실제로 옮겼을 때만 재렌더 (더블클릭 경로를 막지 않기 위해)
+            palette.move_block_to(self.sel_tab, src, target)
+            self.sel_block = target
+            self._render_blocks()
             self._notify()
 
     def _widget_to_index(self, w):

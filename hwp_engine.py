@@ -641,23 +641,13 @@ def insert_fragment(path):
     hwp.insert_file(str(path), keep_section=0)
 
 
-def strip_slot_markers(anchor_pos, slot_names=None):
-    r"""anchor_pos부터 문서 끝까지의 빈칸 표시를 제거한다.
+def strip_slot_markers(anchor_pos):
+    r"""anchor_pos부터 문서 끝까지의 빈칸 표시(\)를 제거한다.
 
-    빈칸 표시(\ 및 이름 빈칸 \이름\)는 '여기에 내용이 들어간다'는 안내일 뿐이라,
-    채워지지 않고 남으면 출력물에 그대로 보인다 → 삽입/변환 후 이 함수로 청소한다.
-    이름 빈칸(\이름\)을 먼저 통째로 지우고, 남은 홑 역슬래시(\)를 지운다.
+    빈칸 표시는 '여기에 내용이 들어간다'는 안내일 뿐이라, 채워지지 않고 남으면
+    출력물에 그대로 보인다 → 삽입/변환 후 이 함수로 청소한다.
     """
     act = hwp.HAction
-    # 이름 빈칸 먼저 (통째 제거)
-    for name in (slot_names or []):
-        token = "\\" + name + "\\"
-        hwp.SetPos(*anchor_pos)
-        for _ in range(50):
-            if not hwp.find(token, direction="Forward"):
-                break
-            act.Run("Delete")
-    # 남은 홑 역슬래시 제거
     hwp.SetPos(*anchor_pos)
     for _ in range(200):
         if not hwp.find("\\", direction="Forward"):
@@ -689,9 +679,9 @@ def execute_function_block(actions):
     ps = hwp.HParameterSet
 
     char_fields = {}   # CharShape에 묶어 넣을 값들
+    para_fields = {}   # ParagraphShape에 묶어 넣을 값들
     toggles = []       # Run 액션들
     para_aligns = []
-    line_spacing = None
 
     for a in actions:
         func = a.get("func")
@@ -709,7 +699,17 @@ def execute_function_block(actions):
         elif func == "글자색":
             char_fields["color"] = val
         elif func == "줄간격":
-            line_spacing = int(val)
+            para_fields["line_spacing"] = int(val)
+        # 들여쓰기/내어쓰기는 같은 필드(Indentation)의 부호 차이 (실측 2026-07-15)
+        #   양수 = 첫 줄을 안으로, 음수 = 첫 줄을 밖으로. 단위는 pt(=100 HwpUnit).
+        elif func == "들여쓰기":
+            para_fields["indent_pt"] = abs(float(val))
+        elif func == "내어쓰기":
+            para_fields["indent_pt"] = -abs(float(val))
+        elif func == "왼쪽여백":
+            para_fields["left_mm"] = float(val)
+        elif func == "오른쪽여백":
+            para_fields["right_mm"] = float(val)
 
     # 1) 값 있는 글자서식 묶어서 한 번에
     if char_fields:
@@ -734,19 +734,25 @@ def execute_function_block(actions):
     for action_id in para_aligns:
         act.Run(action_id)
 
-    # 4) 줄간격
-    if line_spacing is not None:
+    # 4) 값 있는 문단서식(줄간격·들여쓰기/내어쓰기·좌우여백) 묶어서 한 번에
+    if para_fields:
         act.GetDefault("ParagraphShape", ps.HParaShape.HSet)
-        ps.HParaShape.LineSpacing = line_spacing
-        ps.HParaShape.LineSpacingType = 0
+        if "line_spacing" in para_fields:
+            ps.HParaShape.LineSpacing = para_fields["line_spacing"]
+            ps.HParaShape.LineSpacingType = 0
+        if "indent_pt" in para_fields:
+            ps.HParaShape.Indentation = hwp.PointToHwpUnit(para_fields["indent_pt"])
+        if "left_mm" in para_fields:
+            ps.HParaShape.LeftMargin = hwp.MiliToHwpUnit(para_fields["left_mm"])
+        if "right_mm" in para_fields:
+            ps.HParaShape.RightMargin = hwp.MiliToHwpUnit(para_fields["right_mm"])
         act.Execute("ParagraphShape", ps.HParaShape.HSet)
 
 
-def run_block(block, template_path_fn=None, slot_names_fn=None):
+def run_block(block, template_path_fn=None):
     """팔레트 블럭 하나를 실행한다. 종류에 따라 삽입/적용 분기.
 
     template_path_fn: 템플릿 이름 → 조각 파일 경로 (library.template_path 등).
-    slot_names_fn:    템플릿 이름 → 이름 빈칸 목록 (청소용, 선택).
     반환: (성공여부, 상태메시지)
     """
     btype = block.get("type")
@@ -768,8 +774,7 @@ def run_block(block, template_path_fn=None, slot_names_fn=None):
         anchor = hwp.GetPos()
         insert_fragment(path)
         # 팔레트로 넣을 땐 채울 내용이 없으므로 빈칸 표시(\)를 모두 청소
-        slot_names = slot_names_fn(name) if slot_names_fn else None
-        strip_slot_markers(anchor, slot_names)
+        strip_slot_markers(anchor)
         return True, "템플릿 삽입"
     return False, f"알 수 없는 블럭: {btype}"
 
@@ -842,7 +847,7 @@ def execute_library_plan(ops, template_path_fn):
             insert_plain(marker_base + str(len(templates)) + "◈")
             templates.append(op)
 
-    # ② 마커 → 조각 치환 + 빈칸 채움 (이름 빈칸 먼저, 그다음 순서 빈칸)
+    # ② 마커 → 조각 치환 + 빈칸(\) 순서대로 채움
     filled = 0
     for idx, (_, item, fills) in enumerate(templates):
         marker = marker_base + str(idx) + "◈"
@@ -852,22 +857,16 @@ def execute_library_plan(ops, template_path_fn):
         delete_selection()
         anchor = hwp.GetPos()
         insert_fragment(template_path_fn(item))
-        named = fills.get("named", {})
-        ordered = fills.get("ordered", [])
-        # 이름 빈칸: \이름\ 을 찾아 값으로 (순서 무관, 못 찾으면 그대로 둠)
-        for slot_name, value in named.items():
-            hwp.SetPos(*anchor)
-            if hwp.find("\\" + slot_name + "\\", direction="Forward"):
-                insert_plain(value)
-                filled += 1
-        # 순서 빈칸: 남은 \ 를 차례로
+        # 빈칸 \ 를 위에서부터 차례로. 값이 None('-')이면 그 칸은 비워둔다.
         hwp.SetPos(*anchor)
-        limit = min(len(ordered), int(item.get("slot_count") or 0))
-        for k in range(limit):
+        for value in fills:
             if not hwp.find("\\", direction="Forward"):
                 break
-            insert_plain(ordered[k])
-            filled += 1
-        # 채워지지 않고 남은 빈칸 표시(\ , \이름\) 청소 — 출력물에 남으면 안 됨
-        strip_slot_markers(anchor, item.get("slot_names"))
+            if value is None:
+                act.Run("Delete")           # 건너뛰기 — 빈칸만 지움
+            else:
+                insert_plain(value)
+                filled += 1
+        # 채우지 않고 남은 빈칸 표시(\) 청소 — 출력물에 남으면 안 됨
+        strip_slot_markers(anchor)
     return {"templates": len(templates), "slots_filled": filled}

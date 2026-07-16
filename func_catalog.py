@@ -24,7 +24,16 @@ FUNCTIONS = [
     {"key": "왼쪽정렬",   "kind": "para", "hint": "문단 왼쪽 정렬"},
     {"key": "양쪽정렬",   "kind": "para", "hint": "문단 양쪽 정렬"},
     {"key": "줄간격",   "kind": "number", "unit": "%",  "hint": "문단 줄간격(%)"},
+    {"key": "들여쓰기", "kind": "number", "unit": "pt",
+     "hint": "첫 줄만 안으로 (문단 첫 줄 들여쓰기)"},
+    {"key": "내어쓰기", "kind": "number", "unit": "pt",
+     "hint": "첫 줄만 밖으로 (둘째 줄부터 들여씀 — 발문·보기 번호용)"},
+    {"key": "왼쪽여백", "kind": "number", "unit": "mm", "hint": "문단 전체를 오른쪽으로"},
+    {"key": "오른쪽여백", "kind": "number", "unit": "mm", "hint": "문단 오른쪽 여백"},
 ]
+
+# 소수점 입력을 허용할 기능 (나머지는 정수)
+FLOAT_KEYS = {"글씨크기", "들여쓰기", "내어쓰기", "왼쪽여백", "오른쪽여백"}
 
 FUNC_BY_KEY = {f["key"]: f for f in FUNCTIONS}
 

@@ -400,13 +400,7 @@ class LibraryManager(tk.Toplevel):
         if cat == "문자":
             return f"{item['name']}  |  {meta}"
         slots = int(item.get("slot_count") or 0)
-        names = item.get("slot_names") or []
-        parts = []
-        if slots:
-            parts.append(f"순서 빈칸 {slots}")
-        if names:
-            parts.append(f"이름 빈칸 {len(names)}")
-        slot_txt = "·".join(parts) if parts else "빈칸 없음"
+        slot_txt = f"빈칸 {slots}개" if slots else "빈칸 없음"
         return f"{slot_txt}  |  {meta}"
 
     # ── 서식 ─────────────────────────────────────────
@@ -468,20 +462,20 @@ class LibraryManager(tk.Toplevel):
                     "한글에서 템플릿으로 저장할 영역을 드래그로 선택하거나,\n"
                     "표를 저장하려면 표 안을 클릭만 해둬도 됩니다.", parent=self)
                 return
-        # 빈칸 스캔 — \이름\ = 이름 빈칸, \ 홀로 = 순서 빈칸
-        import parser as md_parser
+        # 빈칸 스캔 — \ 하나가 빈칸 하나
         captured_text = hwp_engine.read_selection_text(retries=6)
-        slot_names = [s.strip() for s in
-                      md_parser.LIB_TOKEN_RE.findall(captured_text)]
-        slot_count = captured_text.count("\\") - 2 * len(slot_names)
-        slot_count = max(slot_count, 0)
-        parts = []
+        slot_count = captured_text.count("\\")
         if slot_count:
-            parts.append(f"순서 빈칸(\\) {slot_count}개 — 아랫줄들이 순서대로")
-        if slot_names:
-            parts.append(f"이름 빈칸 {len(slot_names)}개({', '.join(slot_names[:5])})"
-                         " — '이름=값' 줄로")
-        note = " / ".join(parts) + " 채워집니다." if parts else ""
+            note = (f"빈칸(\\) {slot_count}개 발견 — 마크다운 변환 시 아랫줄 "
+                    f"{slot_count}줄이 위에서부터 순서대로 채워집니다.\n"
+                    "   (비울 칸에는 '-' 한 줄)")
+        elif "/" in captured_text:
+            # 실제로 겪은 혼동: 빈칸을 슬래시(/)로 찍으면 인식 안 됨 (2026-07-16)
+            note = ("⚠ 빈칸 표시가 없습니다. 혹시 슬래시(/)를 쓰셨나요?\n"
+                    "   빈칸은 역슬래시(\\)여야 합니다 — 한글에서 ₩ 로 보이는 그 키입니다.")
+        else:
+            note = ("빈칸 표시(\\)가 없습니다. 글자가 들어갈 자리에 \\ 를 넣어두면\n"
+                    "마크다운 변환 때 아랫줄 내용이 순서대로 채워집니다.")
         meta = MetaDialog(self, title="템플릿 등록", extra_note=note)
         self.wait_window(meta)
         if not meta.result:
@@ -491,12 +485,18 @@ class LibraryManager(tk.Toplevel):
         tmp_path = library.FRAGMENTS_DIR / f"_tmp_{int(time.time()*1000)}.hwp"
         try:
             hwp_engine.capture_fragment(tmp_path)
+            library.add_template_from_capture(name, tmp_path, label=label,
+                                              group=group, slot_count=slot_count)
         except Exception as e:
             messagebox.showerror("캡처 실패", str(e), parent=self)
             return
-        library.add_template_from_capture(name, tmp_path, label=label,
-                                          group=group, slot_count=slot_count,
-                                          slot_names=slot_names)
+        finally:
+            # 실패 시 임시 조각이 fragments/ 에 쌓이지 않게 정리
+            # (add_template_from_capture 가 성공했으면 이미 옮겨져 없음)
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
         self._refresh("템플릿")
         self._notify()
 

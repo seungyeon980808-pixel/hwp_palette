@@ -131,15 +131,17 @@ def _replace_char_tokens(line, lookup, warnings):
     return LIB_TOKEN_RE.sub(repl, line)
 
 
+SKIP_MARK = '-'      # 이 줄은 해당 빈칸을 비워둔다
+
+
 def build_library_plan(text, lookup):
     r"""선택 텍스트 → 실행 계획.
 
     lookup: {라벨: (분류명, 항목dict)} — library.label_lookup() 결과.
     반환: (ops, warnings)
       ops: ('line', 텍스트) — 그대로 삽입할 한 줄
-           ('template', 항목, {'named': {이름: 값}, 'ordered': [줄들]})
-             — 템플릿 삽입 + 빈칸 채움. '이름=값' 줄은 이름 빈칸(\이름\)으로,
-               그 외 줄은 이름 없는 빈칸(\)에 순서대로.
+           ('template', 항목, [줄들]) — 템플릿 삽입 + 빈칸(\)에 순서대로 채움.
+             줄이 '-' 하나면 그 빈칸은 건너뛴다(비워둠).
     """
     ops, warnings = [], []
     lines = (text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
@@ -153,28 +155,21 @@ def build_library_plan(text, lookup):
             if entry and entry[0] == '템플릿':
                 item = entry[1]
                 slot_count = int(item.get('slot_count') or 0)
-                slot_names = list(item.get('slot_names') or [])
-                named, ordered = {}, []
+                fills = []
                 j = i + 1
-                while (len(ordered) < slot_count
-                       or len(named) < len(slot_names)) and j < len(lines):
+                while len(fills) < slot_count and j < len(lines):
                     cand = lines[j].strip()
                     if not cand:
                         j += 1
                         continue
                     if LIB_TOKEN_RE.fullmatch(cand):
                         break          # 다음 라벨 시작 — 여기까지가 이 템플릿 몫
-                    eq = cand.split('=', 1)
-                    if len(eq) == 2 and eq[0].strip() in slot_names:
-                        # '이름=값' — 이 템플릿의 이름 빈칸에만 해당할 때
-                        named[eq[0].strip()] = _replace_char_tokens(
-                            eq[1].strip(), lookup, warnings)
-                    elif len(ordered) < slot_count:
-                        ordered.append(_replace_char_tokens(lines[j], lookup, warnings))
+                    if cand == SKIP_MARK:
+                        fills.append(None)     # 이 빈칸은 비움
                     else:
-                        break          # 순서 빈칸도 다 찼는데 이름 줄도 아님 — 본문
+                        fills.append(_replace_char_tokens(lines[j], lookup, warnings))
                     j += 1
-                ops.append(('template', item, {'named': named, 'ordered': ordered}))
+                ops.append(('template', item, fills))
                 i = j
                 continue
         ops.append(('line', _replace_char_tokens(lines[i], lookup, warnings)))

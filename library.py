@@ -43,9 +43,11 @@ def load():
         for it in out[cat]:
             it.setdefault("label", it.get("name", ""))
             it.setdefault("group", DEFAULT_GROUP)
+            # 이미 \라벨\ 로 저장돼 있던 항목도 알맹이로 교정 (조회 실패 방지)
+            it["label"] = normalize_label(it.get("label")) or it.get("name", "")
             if cat == "템플릿":
                 it.setdefault("slot_count", 0)
-                it.setdefault("slot_names", [])
+                it.pop("slot_names", None)   # 이름 빈칸 기능 폐지 (2026-07-16)
     return out
 
 
@@ -69,9 +71,19 @@ def _unique_name(items, name):
     return f"{name} ({n})"
 
 
+def normalize_label(label):
+    r"""라벨에서 감싼 역슬래시를 벗겨낸다.
+
+    사용자는 문서에 쓰는 그대로 `\계획서표지\` 라고 입력하기 쉬운데, 저장은
+    알맹이(`계획서표지`)여야 조회가 된다(안 그러면 영원히 매칭 실패).
+    """
+    return (label or "").strip().strip("\\").strip()
+
+
 def _meta(name, label, group):
+    lab = normalize_label(label) or normalize_label(name) or name.strip()
     return {"name": name,
-            "label": (label or name).strip(),
+            "label": lab,
             "group": (group or DEFAULT_GROUP).strip() or DEFAULT_GROUP}
 
 
@@ -97,11 +109,10 @@ def add_char(name, text, label=None, group=None):
 
 
 def add_template_from_capture(name, fragment_src_path, label=None, group=None,
-                              slot_count=0, slot_names=None):
+                              slot_count=0):
     r"""fragment_src_path의 조각 파일을 fragments/ 아래 고유 파일명으로 옮겨 등록.
 
-    slot_count: 이름 없는 빈칸(\ 홀로) 개수 — 변환 시 아랫줄들이 순서대로 들어감.
-    slot_names: 이름 있는 빈칸(\이름\) 목록 — 변환 시 '이름=값' 줄로 채움.
+    slot_count: 빈칸(\) 개수 — 변환 시 아랫줄들이 위에서부터 순서대로 들어간다.
     """
     _ensure_dirs()
     data = load()
@@ -112,7 +123,6 @@ def add_template_from_capture(name, fragment_src_path, label=None, group=None,
     item = _meta(name, label, group)
     item["file"] = fname
     item["slot_count"] = int(slot_count or 0)
-    item["slot_names"] = list(slot_names or [])
     data["템플릿"].append(item)
     save(data)
     return name
