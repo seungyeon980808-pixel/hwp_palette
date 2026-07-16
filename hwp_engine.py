@@ -24,15 +24,59 @@ def set_active_spec(spec):
     S = spec
 
 
+def _hwp_window_handles():
+    """현재 떠 있는 한글 창 핸들 목록."""
+    try:
+        import win32gui
+    except ImportError:
+        return []
+    found = []
+
+    def _cb(hwnd, _):
+        try:
+            if win32gui.IsWindowVisible(hwnd) and "hwp.exe" in win32gui.GetClassName(hwnd):
+                found.append(hwnd)
+        except Exception:
+            pass
+    try:
+        win32gui.EnumWindows(_cb, None)
+    except Exception:
+        return []
+    return found
+
+
 def connect():
-    """이미 연결돼 있으면 재사용, 아니면 새로 연결. 실패 시 예외 발생."""
+    """이미 연결돼 있으면 재사용, 아니면 새로 연결. 실패 시 예외 발생.
+
+    창 상태 보존 (실측 2026-07-16):
+      pyhwpx의 Hwp() 생성자는 무조건
+        XHwpWindows.Active_XHwpWindow.Visible = visible
+      을 실행하는데, 이 대입이 '이미 최대화된 창'을 보통 크기로 되돌린다
+      (최대화 1550x878 -> 보통 1080x799 재현). 사용자가 한글을 최대화해 두고
+      변환을 누르면 창이 줄어드는 증상의 원인.
+      → 새로 연결하기 전에 창 배치를 저장했다가 그대로 복원한다.
+    """
     global hwp
     try:
         _ = hwp.Version
         return hwp
     except Exception:
-        hwp = Hwp()
-        return hwp
+        pass
+
+    try:
+        import win32gui
+        saved = [(h, win32gui.GetWindowPlacement(h)) for h in _hwp_window_handles()]
+    except Exception:
+        saved = []
+
+    hwp = Hwp()
+
+    for handle, placement in saved:
+        try:
+            win32gui.SetWindowPlacement(handle, placement)
+        except Exception:
+            pass
+    return hwp
 
 
 # ── 문서/선택 ─────────────────────────────────────────
