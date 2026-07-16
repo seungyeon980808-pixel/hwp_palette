@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 import settings
+import exam_engine
 
 BG   = "#f5f5f7"
 CARD = "#ffffff"
@@ -210,7 +211,7 @@ class BogiVisualEditor(tk.Toplevel):
             spec = settings.get_active_spec()
             spec["bogi_box"] = dict(self.box)      # 현재 미저장 값으로
             hwp_engine.set_active_spec(spec)
-            hwp_engine.insert_bogi_box(["보기 예시 항목 하나", "보기 예시 항목 둘",
+            exam_engine.insert_bogi_box(["보기 예시 항목 하나", "보기 예시 항목 둘",
                                         "보기 예시 항목 셋"])
             # 원래 저장된 활성 스펙으로 복원(미저장 상태 반영 방지)
             hwp_engine.set_active_spec(settings.get_active_spec())

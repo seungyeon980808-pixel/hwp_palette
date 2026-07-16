@@ -109,7 +109,8 @@ python main.py        # 또는 run.bat
 
 ```
 main.py            Tkinter UI · 진입점
-hwp_engine.py      한컴 자동화(pyhwpx) 엔진 — 삽입·서식·표·캡처·변환
+hwp_engine.py      한컴 자동화(pyhwpx) 엔진 — 연결·삽입·서식·캡처·변환
+exam_engine.py     시험문제 조판 (발문·자료박스·보기박스·선지 표)
 parser.py          마크다운 파싱 (시험문제 문법 + \라벨\ 문법)
 
 palette.py         커스텀 팔레트(탭·블럭) 저장소
@@ -123,7 +124,7 @@ builtin_chars.py   내장 문자(원문자·로마숫자·낫표)
 settings.py        양식 프리셋 저장소
 settings_ui.py     양식 설정 창
 bogi_visual_ui.py  보기박스 시각 편집
-config.json        개인 설정 (git 제외)
+config.json        개인 설정 · 팔레트 탭 (git 제외)
 library.json       개인 라이브러리 (git 제외)
 fragments/         템플릿 조각 .hwp (git 제외)
 ```

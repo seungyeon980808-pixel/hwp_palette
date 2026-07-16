@@ -50,6 +50,7 @@ from tkinter import messagebox, filedialog
 
 import parser as md_parser
 import hwp_engine
+import exam_engine
 import settings
 import settings_ui
 import library
@@ -153,7 +154,7 @@ def fn_convert():
         if md_parser.has_recognized_content(data):
             # 시험문제 변환 (기존 동작)
             hwp_engine.delete_selection()
-            should_increment = hwp_engine.insert_question(data, num_var.get(), num_use.get())
+            should_increment = exam_engine.insert_question(data, num_var.get(), num_use.get())
             hwp_engine._diag("fn_convert: insert_question(시험문제 변환) 후")
             if should_increment:
                 num_var.set(num_var.get() + 1)

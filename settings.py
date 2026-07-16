@@ -240,9 +240,9 @@ def set_config_value(key, value):
     save_config(cfg)
 
 
-# ── 빠른 입력 버튼 (전역, 프리셋과 무관한 개인 기호 도구) ──
-# 5칸 그리드 기준 플랫 리스트. "" = 빈 칸(버튼 없음).
-QUICK_COLS = 5
+# ── 팔레트 '빠른입력' 탭 시드 (과학 교사용 기본 기호) ──
+# 새 설치 때 palette._seed_tabs() 가 이 목록을 문자 블럭으로 만들어준다.
+# 편집은 환경설정의 팔레트에서 하므로 저장 함수는 두지 않는다.
 DEFAULT_QUICK_BUTTONS = [
     "Ω", "→", "℃", "·", "×",
     "±", "≒", "≠", "≤", "≥",
@@ -253,9 +253,6 @@ DEFAULT_QUICK_BUTTONS = [
 
 
 def get_quick_buttons():
+    """시드용 기호 목록. 구 버전에서 편집해둔 값이 config에 있으면 그걸 쓴다."""
     v = get_config_value("quick_buttons", None)
     return list(v) if v is not None else list(DEFAULT_QUICK_BUTTONS)
-
-
-def save_quick_buttons(items):
-    set_config_value("quick_buttons", list(items))
