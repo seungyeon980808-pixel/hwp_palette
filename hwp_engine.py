@@ -25,6 +25,7 @@ import os
 import time
 
 from pyhwpx import Hwp
+import pyhwpx.core as pyhwpx_core     # __init__ 우회 시 필요한 기본값(fonts)
 import applog
 import settings
 
@@ -94,24 +95,106 @@ def _hwp_window_handles():
     return found
 
 
+def _connection_error(h):
+    r"""연결이 살아 있으면 None, 죽었으면 그 예외를 돌려준다.
+
+    **pyhwpx 의 `hwp.Version` 프로퍼티를 쓰면 안 된다** (실측 2026-07-19):
+        return [int(i) for i in self.hwp.Version.split(", ")]
+    보다시피 문자열을 파싱한다. 한글이 멀쩡히 살아 있어도 버전 표기가
+    `"13, 0, 0, 2151"` 꼴이 아니면 여기서 ValueError 가 난다.
+
+    그걸 '연결이 죽었다'로 오판하면 **변환할 때마다 재연결**하게 되고,
+    재연결은 pyhwpx 생성자의 `Visible` 대입 때문에 최대화된 창을 보통 크기로
+    되돌린다. 우리가 곧바로 복원하므로 결과는 **"변환을 누르면 창이 작아졌다
+    다시 커지는"** 증상이 된다. 실제로 그 버그가 났다.
+
+    그래서 파싱하지 않는 원시 COM 값을 한 번 건드려 살아 있는지만 본다.
+    """
+    if h is None:
+        return ValueError("아직 연결된 적이 없음")
+    try:
+        _ = h.hwp.Version       # 원시 COM 값 — 파싱하지 않는다
+        return None
+    except Exception as e:
+        return e
+
+
+def _running_hwp_com():
+    """이미 실행 중인 한글의 COM 객체. 없으면 None. (한글을 새로 띄우지 않는다)"""
+    import pythoncom
+    import win32com.client as win32
+    ctx = pythoncom.CreateBindCtx(0)
+    pythoncom.CoInitialize()
+    rot = pythoncom.GetRunningObjectTable()
+    for moniker in rot.EnumRunning():
+        if moniker.GetDisplayName(ctx, moniker).startswith("!HwpObject."):
+            obj = rot.GetObject(moniker)
+            return win32.gencache.EnsureDispatch(
+                obj.QueryInterface(pythoncom.IID_IDispatch))
+    return None
+
+
+def _attach_without_resize():
+    r"""이미 떠 있는 한글에 **창을 건드리지 않고** 붙는다. 못 하면 None.
+
+    왜 이렇게까지 하나 (실측 2026-07-19):
+      pyhwpx 의 Hwp() 생성자는 무조건
+          XHwpWindows.Active_XHwpWindow.Visible = visible
+      을 실행하는데, 이 대입이 **최대화된 창을 보통 크기로 되돌린다**
+      (측정값: 최대 1094x1934 → 보통 1080x802).
+      예전엔 창 배치를 저장했다 복원하는 것으로 막으려 했지만, 그건 '되돌리기'라
+      사용자 눈에는 여전히 **작아졌다 다시 커지는 깜빡임**으로 보인다.
+      → 애초에 생성자를 거치지 않는다.
+
+    pyhwpx.Hwp.__init__ 이 self 에 세팅하는 것은 hwp / on_quit / htf_fonts 세 개뿐이라
+    (2026-07-19 확인) 그것만 채워 넣으면 나머지 메서드는 그대로 동작한다.
+    pyhwpx 가 올라가면서 필드가 늘어날 수 있으므로, 채운 뒤 실제로 쓸 수 있는지
+    확인하고 아니면 None 을 돌려 정상 경로로 넘긴다.
+    """
+    try:
+        com = _running_hwp_com()
+        if com is None:
+            return None                 # 한글이 안 떠 있음 — 새로 실행해야 한다
+        h = Hwp.__new__(Hwp)            # __init__ 을 건너뛴다 (Visible 대입 회피)
+        h.hwp = com
+        h.on_quit = False
+        h.htf_fonts = pyhwpx_core.fonts
+        _ = h.hwp.Version               # 실제로 말이 통하는지 확인
+        try:
+            h.register_module()         # 보안 모듈 등록 (파일 열기/저장에 필요)
+        except Exception as e:
+            applog.exc("보안 모듈 등록 실패 — 파일 접근 시 확인창이 뜰 수 있음", e)
+        return h
+    except Exception as e:
+        applog.exc("창 보존 연결 실패 — 일반 연결로 넘어감(창이 한 번 깜빡일 수 있음)", e)
+        return None
+
+
 def connect():
     """이미 연결돼 있으면 재사용, 아니면 새로 연결. 실패 시 예외 발생.
 
-    창 상태 보존 (실측 2026-07-16):
-      pyhwpx의 Hwp() 생성자는 무조건
-        XHwpWindows.Active_XHwpWindow.Visible = visible
-      을 실행하는데, 이 대입이 '이미 최대화된 창'을 보통 크기로 되돌린다
-      (최대화 1550x878 -> 보통 1080x799 재현). 사용자가 한글을 최대화해 두고
-      변환을 누르면 창이 줄어드는 증상의 원인.
-      → 새로 연결하기 전에 창 배치를 저장했다가 그대로 복원한다.
+    창 크기가 변하지 않게 하는 순서 (실측 2026-07-19):
+      1) 이미 붙어 있으면 그대로 재사용 — 아무것도 안 건드린다
+      2) 한글이 떠 있으면 생성자를 거치지 않고 붙는다(_attach_without_resize)
+      3) 한글이 아예 없을 때만 Hwp() 로 새로 실행 — 이때는 보존할 최대화 상태가
+         없으므로 창이 줄어들 일도 없다
+    2번이 실패할 때만 옛 방식(배치 저장 → Hwp() → 복원)으로 넘어간다. 그 경우엔
+    창이 한 번 깜빡이므로, 왜 그랬는지 app.log 에 남는다.
     """
     global hwp
-    try:
-        _ = hwp.Version
+    err = _connection_error(hwp)
+    if err is None:
         _diag("connect: 기존 연결 재사용")
+        return hwp                  # ← 평소엔 여기서 끝. 창을 건드리지 않는다.
+
+    if hwp is not None:
+        applog.warn(f"connect: 연결이 끊어져 새로 연결 — {type(err).__name__}: {err}")
+
+    attached = _attach_without_resize()
+    if attached is not None:
+        hwp = attached
+        _diag("connect: 창 보존 연결 성공")
         return hwp
-    except Exception:
-        pass
 
     _diag("connect: 재연결 직전")
     try:
