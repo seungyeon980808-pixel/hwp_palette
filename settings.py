@@ -238,6 +238,30 @@ def import_profile(path, new_name=None):
 
 
 # ── 기타 설정(사진 폴더 등) ────────────────────────────
+# ── config.json 키 소유권 (개선안 21) ──────────────────
+# config.json 하나를 두 모듈이 나눠 쓴다. API가 따로라 "누가 무엇을 책임지는지"가
+# 코드에 안 드러나 있었다 → 여기에 한 곳으로 모아 적는다.
+#
+#   키                소유 모듈      접근 방법
+#   ---------------   ------------   ----------------------------------------
+#   profiles          settings.py    이 파일의 프리셋 API (list/get/save_profile…)
+#   active_profile    settings.py    get_active_name() / set_active_name()
+#   palette_tabs      palette.py     palette.load_tabs() / save_tabs()
+#   default_format    palette.py     palette.get_default_format() / save_…()
+#   quick_buttons     settings.py    get_quick_buttons() — 구 버전 잔재(읽기 전용)
+#
+# 규칙: **소유 모듈이 아닌 곳에서 그 키를 직접 만지지 않는다.** 남의 키가
+# 필요하면 소유 모듈의 함수를 부른다. 아래 두 함수는 palette.py 처럼 자기 키를
+# 가진 모듈이 config.json 에 드나드는 유일한 통로다(파일 입출력 중복 방지).
+CONFIG_KEY_OWNERS = {
+    "profiles": "settings",
+    "active_profile": "settings",
+    "quick_buttons": "settings",
+    "palette_tabs": "palette",
+    "default_format": "palette",
+}
+
+
 def get_config_value(key, default=None):
     return load_config().get(key, default)
 

@@ -2,12 +2,13 @@
 """환경설정 창 — 커스텀 팔레트(탭 + 블럭)와 기본 서식을 관리한다.
 
 왼쪽: 탭 목록(추가/이름변경/삭제/순서). 오른쪽: 선택 탭의 블럭 목록
-(문자/템플릿/기능 추가, 순서 이동, 칸수(span) 변경, 삭제) + 기본 서식 설정.
+(문자/템플릿/서식 조합 추가, 순서 이동, 칸수(span) 변경, 삭제) + 기본 서식 설정.
 
 블럭 추가:
   문자   한글에서 복사한 문자/문구를 붙여넣거나 직접 입력 (1칸)
   템플릿 라이브러리에 저장된 템플릿 선택 (기본 2칸)
-  기능   기능 목록에서 여러 개 체크 → 한 블럭이 병렬 실행 (굵게+자간+글씨체…)
+  서식 조합  목록에서 여러 개 체크 → 한 블럭이 병렬 실행 (굵게+자간+글씨체…)
+             (라이브러리의 "서식"은 문서에서 캡처한 것, 이쪽은 직접 고르는 것)
 """
 
 import tkinter as tk
@@ -28,7 +29,12 @@ BORDER = "#d2d2d7"
 ROWBG = "#fafafa"
 FONT = "맑은 고딕"
 
-TYPE_LABEL = {"char": "문자", "template": "템플릿", "function": "기능", "form": "양식"}
+TYPE_LABEL = {"char": "문자", "template": "템플릿", "function": "서식 조합",
+              "form": "양식"}
+
+# 글자 수 상한 (개선안 23 — 흩어져 있던 매직넘버에 이름을 붙임)
+TILE_LABEL_MAX = 12      # 격자 미리보기 타일에 넣을 수 있는 글자 수
+AUTO_NAME_MAX = 16       # 이름을 안 지었을 때 기능 이름들을 이어 붙이는 길이
 
 
 def _rgb_int(r, g, b):
@@ -37,12 +43,16 @@ def _rgb_int(r, g, b):
 
 # ───────────────────────── 기능 블럭 편집 대화상자 ─────────────────────────
 class FunctionDialog(tk.Toplevel):
-    """기능 목록에서 여러 개를 체크해 병렬 기능 블럭을 만든다."""
+    """조작 목록에서 여러 개를 체크해 '서식 조합' 블럭을 만든다.
+
+    저장 형식의 type 은 "function" 그대로다 — 표기만 바꾸고 개인 config.json 을
+    건드리지 않기 위함 (개선안 10).
+    """
 
     def __init__(self, master, block=None):
         super().__init__(master)
         self.result = None
-        self.title("기능 블럭")
+        self.title("서식 조합 블럭")
         self.configure(bg=BG)
         self.resizable(False, False)
         self.attributes("-topmost", True)
@@ -50,9 +60,9 @@ class FunctionDialog(tk.Toplevel):
         existing = {a["func"]: a.get("value") for a in (block or {}).get("actions", [])}
         name0 = (block or {}).get("name", "")
 
-        tk.Label(self, text="기능 블럭 만들기", font=(FONT, 11, "bold"),
+        tk.Label(self, text="서식 조합 블럭 만들기", font=(FONT, 11, "bold"),
                  bg=BG, fg=TEXT).pack(anchor="w", padx=16, pady=(12, 2))
-        tk.Label(self, text="체크한 기능들이 이 블럭 하나에 병렬로 담깁니다.",
+        tk.Label(self, text="체크한 것들이 이 블럭 하나에 병렬로 담깁니다. 글자를 선택하고 누르세요.",
                  font=(FONT, 8), bg=BG, fg=MUTED).pack(anchor="w", padx=16, pady=(0, 8))
 
         namef = tk.Frame(self, bg=BG, padx=16)
@@ -164,10 +174,10 @@ class FunctionDialog(tk.Toplevel):
                     return
                 actions.append({"func": key, "value": int(var.get())})
         if not actions:
-            messagebox.showwarning("기능 없음", "하나 이상 체크해주세요.", parent=self)
+            messagebox.showwarning("선택 없음", "하나 이상 체크해주세요.", parent=self)
             return
         if not name:
-            name = " + ".join(a["func"] for a in actions)[:16]
+            name = " + ".join(a["func"] for a in actions)[:AUTO_NAME_MAX]
         self.result = {"type": "function", "name": name, "actions": actions, "span": 1}
         self.destroy()
 
@@ -189,7 +199,7 @@ class SettingsWindow(tk.Toplevel):
 
         tk.Label(self, text="환경설정", font=(FONT, 12, "bold"),
                  bg=BG, fg=TEXT).pack(anchor="w", padx=16, pady=(12, 2))
-        tk.Label(self, text="탭을 만들고, 그 안에 문자·템플릿·기능 블럭을 넣어 나만의 팔레트를 구성합니다.",
+        tk.Label(self, text="탭을 만들고, 그 안에 문자·템플릿·서식 조합 블럭을 넣어 나만의 팔레트를 구성합니다.",
                  font=(FONT, 8), bg=BG, fg=MUTED).pack(anchor="w", padx=16, pady=(0, 8))
 
         main = tk.Frame(self, bg=BG, padx=16)
@@ -227,7 +237,7 @@ class SettingsWindow(tk.Toplevel):
         tk.Button(addbar, text="+ 템플릿", command=self._add_template, font=(FONT, 9),
                   bg="#e8e8ed", fg=TEXT, bd=0, padx=10, pady=5,
                   cursor="hand2").pack(side="left", padx=(0, 4))
-        tk.Button(addbar, text="+ 기능", command=self._add_function, font=(FONT, 9),
+        tk.Button(addbar, text="+ 서식 조합", command=self._add_function, font=(FONT, 9),
                   bg="#e8e8ed", fg=TEXT, bd=0, padx=10, pady=5,
                   cursor="hand2").pack(side="left", padx=(0, 4))
         tk.Button(addbar, text="+ 양식", command=self._add_form, font=(FONT, 9),
@@ -342,7 +352,7 @@ class SettingsWindow(tk.Toplevel):
 
         if not blocks:
             tk.Label(self.block_area,
-                     text="블럭이 없습니다. 위 ‘+ 문자 / + 템플릿 / + 기능’으로 추가한 뒤\n"
+                     text="블럭이 없습니다. 위 ‘+ 문자 / + 템플릿 / + 서식 조합’으로 추가한 뒤\n"
                           "타일을 끌어 원하는 자리에 놓으세요.",
                      font=(FONT, 9), bg=BG, fg=MUTED, justify="left").pack(anchor="w", pady=8)
             return
@@ -433,7 +443,7 @@ class SettingsWindow(tk.Toplevel):
         pre = {"template": "▦ ", "function": "ƒ ", "form": "📄 "}.get(
             blk["type"], "")
         s = pre + self._block_label(blk)
-        return s if len(s) <= 12 else s[:12] + "…"
+        return s if len(s) <= TILE_LABEL_MAX else s[:TILE_LABEL_MAX] + "…"
 
     def _block_label(self, blk):
         if blk["type"] == "char":

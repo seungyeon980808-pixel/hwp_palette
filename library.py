@@ -17,6 +17,8 @@ import pathlib
 import shutil
 import uuid
 
+import applog
+
 LIBRARY_PATH = pathlib.Path(__file__).parent / "library.json"
 FRAGMENTS_DIR = pathlib.Path(__file__).parent / "fragments"
 
@@ -224,21 +226,54 @@ def replace_template_fragment(item_id, fragment_src_path, slot_count=None):
     return True
 
 
+def find_label_owner(label, exclude_id=None):
+    r"""이 라벨을 이미 쓰고 있는 항목을 찾는다. (분류명, 항목) 또는 None.
+
+    이름(name)은 `_unique_name`이 분류 안에서 유일성을 보장하지만, **라벨은
+    분류를 가로질러 겹칠 수 있는데 아무도 검사하지 않았다**. `label_lookup()`은
+    먼저 만난 것만 담으므로, 나중에 등록한 항목은 `\라벨\`로 영영 호출되지 않는다
+    — 그런데 사용자에게는 아무 표시도 없었다 (개선안 3과 같은 뿌리).
+
+    exclude_id: 수정 중인 자기 자신은 충돌로 보지 않기 위해 제외할 id.
+    """
+    lab = normalize_label(label)
+    if not lab:
+        return None
+    data = load()
+    for cat in CATEGORIES:
+        for it in data[cat]:
+            if exclude_id and it.get("id") == exclude_id:
+                continue
+            if normalize_label(it.get("label")) == lab:
+                return cat, it
+    return None
+
+
 def label_lookup():
     """{라벨: (분류명, 항목)} — 마크다운 변환용.
 
     사용자 등록 항목이 내장 문자보다 우선(같은 라벨이면 사용자 것이 이김).
+    같은 라벨이 둘 이상이면 먼저 만난 것이 이기고, 나머지는 로그에 남긴다
+    (등록 시점에 이미 경고하지만, 구 데이터에는 그 경고를 못 받은 항목이 있다).
     """
     data = load()
     out = {}
     for cat in CATEGORIES:
         for it in data[cat]:
             lab = (it.get("label") or "").strip()
-            if lab and lab not in out:
-                out[lab] = (cat, it)
+            if not lab:
+                continue
+            if lab in out:
+                applog.warn(
+                    f"라벨 중복 — \\{lab}\\ 은(는) [{out[lab][0]}] "
+                    f"{out[lab][1].get('name')!r} 로 동작하고, "
+                    f"[{cat}] {it.get('name')!r} 은(는) 호출되지 않습니다")
+                continue
+            out[lab] = (cat, it)
     # 내장 문자 병합 (사용자가 이미 쓴 라벨은 건드리지 않음)
     try:
-        import builtin_chars
+        import builtin_chars   # 순환 참조 회피 — builtin_chars 는 독립 모듈이나
+                               # 여기서만 쓰이므로 지역 유지
         for lab, text, _ in builtin_chars.BUILTINS:
             if lab not in out:
                 out[lab] = ("문자", {"name": lab, "text": text, "label": lab})
@@ -289,7 +324,7 @@ def _purge_palette_refs(category, item_id):
     palette 를 최상위에서 import 하면 순환 참조가 되므로 여기서 지역 import.
     """
     try:
-        import palette
+        import palette         # 순환 참조 회피 (palette → library → palette)
     except ImportError:
         return
     btype = _BLOCK_TYPE.get(category)
@@ -310,10 +345,115 @@ def _purge_palette_refs(category, item_id):
         palette.save_tabs(tabs)
 
 
+# ── 내보내기 / 가져오기 (개선안 30) ────────────────────
+# 양식 프리셋에는 settings.export_profile 이 있는데 라이브러리엔 없어서, 동료와
+# 항목 단위로 나눌 방법이 "폴더째 복사"뿐이었다. 템플릿·양식은 조각 .hwp 파일이
+# 따로 있으므로 JSON 하나로는 부족하다 → 목록(JSON) + 조각 파일을 zip 하나로 묶는다.
+ARCHIVE_VERSION = 1
+_MANIFEST_NAME = "library.json"
+_ARCHIVE_FRAGMENT_DIR = "fragments"
+
+
+def export_items(pairs, dest_path):
+    """[(분류, 항목), ...] 을 zip 하나로 내보낸다. 반환: 내보낸 항목 수.
+
+    id 는 일부러 함께 넣지 않는다 — 받는 쪽에서 새로 발급해야 기존 항목과
+    충돌하지 않는다(같은 id 가 두 개 있으면 팔레트 참조가 엉킨다).
+    """
+    import zipfile
+    items = []
+    with zipfile.ZipFile(dest_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for cat, it in pairs:
+            rec = {k: v for k, v in it.items() if k not in ("id", "origin")}
+            rec["category"] = cat
+            if cat in _FILE_CATEGORIES:
+                src = FRAGMENTS_DIR / it["file"]
+                if not src.exists():
+                    applog.warn(f"내보내기: 조각 파일이 없어 건너뜀 — "
+                                f"[{cat}] {it.get('name')!r} ({it['file']})")
+                    continue
+                zf.write(src, f"{_ARCHIVE_FRAGMENT_DIR}/{it['file']}")
+            items.append(rec)
+        zf.writestr(_MANIFEST_NAME, json.dumps(
+            {"version": ARCHIVE_VERSION, "items": items},
+            ensure_ascii=False, indent=2))
+    return len(items)
+
+
+def _unique_label(label, taken):
+    """라벨 충돌 시 뒤에 번호를 붙인다 (조용히 가려지는 것보다 낫다)."""
+    lab = normalize_label(label)
+    if not lab or lab not in taken:
+        return lab
+    n = 2
+    while f"{lab}{n}" in taken:
+        n += 1
+    return f"{lab}{n}"
+
+
+def import_archive(src_path):
+    r"""내보낸 zip 을 읽어 라이브러리에 추가한다.
+
+    반환: {"added": 개수, "renamed": [(원래이름, 바뀐이름), ...],
+           "relabeled": [(원래라벨, 바뀐라벨), ...]}
+
+    항상 **추가**만 한다(덮어쓰기 없음). 이름·라벨이 겹치면 번호를 붙여 피한다 —
+    남의 파일을 받아서 내 것이 사라지는 일은 없어야 한다. 라벨을 안 바꾸면
+    `\라벨\` 호출이 조용히 가려지므로(find_label_owner 참고) 라벨도 유일하게 만든다.
+    """
+    import zipfile
+    _ensure_dirs()
+    data = load()
+    taken_labels = {normalize_label(it.get("label"))
+                    for cat in CATEGORIES for it in data[cat]}
+    added, renamed, relabeled = 0, [], []
+
+    with zipfile.ZipFile(src_path) as zf:
+        manifest = json.loads(zf.read(_MANIFEST_NAME).decode("utf-8"))
+        if manifest.get("version") != ARCHIVE_VERSION:
+            raise ValueError(
+                f"지원하지 않는 파일 형식입니다 (version={manifest.get('version')})")
+        for rec in manifest.get("items", []):
+            cat = rec.pop("category", None)
+            if cat not in CATEGORIES:
+                applog.warn(f"가져오기: 알 수 없는 분류라 건너뜀 — {cat!r}")
+                continue
+            item = dict(rec)
+            item["id"] = uuid.uuid4().hex
+
+            orig_name = item.get("name", "이름없음")
+            item["name"] = _unique_name(data[cat], orig_name)
+            if item["name"] != orig_name:
+                renamed.append((orig_name, item["name"]))
+
+            orig_label = normalize_label(item.get("label")) or item["name"]
+            item["label"] = _unique_label(orig_label, taken_labels)
+            if item["label"] != orig_label:
+                relabeled.append((orig_label, item["label"]))
+            taken_labels.add(item["label"])
+
+            if cat in _FILE_CATEGORIES:
+                src_name = item.get("file")
+                arc = f"{_ARCHIVE_FRAGMENT_DIR}/{src_name}"
+                if src_name is None or arc not in zf.namelist():
+                    applog.warn(f"가져오기: 조각 파일이 없어 건너뜀 — {orig_name!r}")
+                    continue
+                # 파일명은 새로 발급 — 보낸 쪽과 우연히 같은 이름이어도 안 덮어씀
+                fname = f"{uuid.uuid4().hex}.hwp"
+                (FRAGMENTS_DIR / fname).write_bytes(zf.read(arc))
+                item["file"] = fname
+
+            data[cat].append(item)
+            added += 1
+
+    save(data)
+    return {"added": added, "renamed": renamed, "relabeled": relabeled}
+
+
 def count_palette_refs(category, item_id):
     """이 항목을 쓰는 팔레트 블럭 수 (삭제 전 경고용)."""
     try:
-        import palette
+        import palette         # 순환 참조 회피 (palette → library → palette)
         tabs = palette.load_tabs()
     except Exception:
         return 0

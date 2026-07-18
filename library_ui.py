@@ -15,6 +15,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import applog
 import hwp_engine
 import engine_library
 import library
@@ -30,7 +31,9 @@ ROWBG = "#fafafa"
 FONT = "맑은 고딕"
 
 TAB_DESC = {
-    "서식": "굵기·색상·자간 등 글자 서식 일부만 저장해 아무 글자에나 입히는 기능",
+    "서식": "문서에서 캡처한 글자 모양(굵기·색상·자간 등) 일부만 저장해 "
+            "아무 글자에나 입히는 기능 "
+            "— 팔레트의 '서식 조합'은 캡처 대신 목록에서 직접 고르는 쪽",
     "문자": "특수문자나 자주 쓰는 문구를 저장해 바로 삽입하는 기능",
     "템플릿": "표·결재란처럼 문서 '일부'를 저장해 커서 자리에 꽂아 넣는 기능",
     "양식": "hwp 파일 '전체'를 저장해 새 문서로 여는 기능 "
@@ -39,6 +42,10 @@ TAB_DESC = {
 }
 
 TABS = ("서식", "문자", "템플릿", "양식", "내장")
+
+# 글자 수 상한 (개선안 23 — 흩어져 있던 매직넘버에 이름을 붙임)
+ROW_PREVIEW_MAX = 16     # 목록 행에 보여줄 내용 미리보기 길이
+AUTO_NAME_MAX = 10       # 문자 등록 시 내용에서 이름을 자동으로 뽑는 길이
 
 
 def _ensure_hwp(parent):
@@ -102,9 +109,11 @@ class StyleFieldDialog(tk.Toplevel):
 class MetaDialog(tk.Toplevel):
     """이름 / 마크다운 라벨 / 분류를 한 창에서 입력."""
 
-    def __init__(self, master, title="등록 정보", name="", label="", extra_note=""):
+    def __init__(self, master, title="등록 정보", name="", label="", extra_note="",
+                 exclude_id=None):
         super().__init__(master)
         self.result = None
+        self.exclude_id = exclude_id        # 수정 중인 자기 자신은 충돌에서 제외
         self.title(title)
         self.configure(bg=BG)
         self.resizable(False, False)
@@ -192,9 +201,31 @@ class MetaDialog(tk.Toplevel):
         if not name:
             messagebox.showwarning("이름 없음", "이름을 입력해주세요.", parent=self)
             return
-        self.result = (name, self.label_var.get().strip() or name,
+        label = self.label_var.get().strip() or name
+        if not self._confirm_label(label):
+            return
+        self.result = (name, label,
                        self.group_var.get().strip() or library.DEFAULT_GROUP)
         self.destroy()
+
+    def _confirm_label(self, label):
+        r"""라벨이 이미 쓰이고 있으면 물어본다. 계속할지 여부를 반환.
+
+        막지는 않는다 — 팔레트 버튼으로만 쓸 거라면 라벨이 겹쳐도 상관없다.
+        다만 \라벨\ 로는 호출되지 않는다는 사실을 알고 넘어가야 한다.
+        """
+        owner = library.find_label_owner(label, exclude_id=self.exclude_id)
+        if owner is None:
+            return True
+        cat, item = owner
+        return messagebox.askyesno(
+            "라벨이 겹칩니다",
+            f"\\{library.normalize_label(label)}\\ 은(는) 이미 "
+            f"[{cat}] '{item.get('name')}' 이(가) 쓰고 있습니다.\n\n"
+            "이대로 저장하면 이 항목은 팔레트 버튼으로는 동작하지만,\n"
+            "마크다운 변환에서는 호출되지 않습니다.\n\n"
+            "그래도 저장할까요?  (아니오 = 라벨을 고치러 돌아가기)",
+            parent=self)
 
 
 class TextInputDialog(tk.Toplevel):
@@ -286,6 +317,16 @@ class LibraryManager(tk.Toplevel):
         self.add_btn = tk.Button(self, font=(FONT, 9, "bold"), bg="#e8e8ed",
                                   fg=TEXT, bd=0, padx=10, pady=8, cursor="hand2")
         self.add_btn.pack(fill="x", padx=16)
+
+        # 공유 — 항목 단위로 동료와 주고받기 (개선안 30)
+        share_row = tk.Frame(self, bg=BG, padx=16)
+        share_row.pack(fill="x", pady=(6, 0))
+        tk.Button(share_row, text="⬆ 이 탭 내보내기", command=self._export_tab,
+                  font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
+                  bd=1, padx=8, pady=4, cursor="hand2").pack(side="left")
+        tk.Button(share_row, text="⬇ 가져오기", command=self._import_archive,
+                  font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
+                  bd=1, padx=8, pady=4, cursor="hand2").pack(side="left", padx=(6, 0))
 
         tk.Frame(self, bg=BORDER, height=1).pack(fill="x", padx=16, pady=(10, 6))
 
@@ -411,7 +452,8 @@ class LibraryManager(tk.Toplevel):
         if cat == "문자":
             # 문자는 내용 자체를 제목으로 (그 문자 그대로 보이게)
             t = item["text"].replace("\n", " ")
-            title = t if len(t) <= 16 else t[:16] + "…"
+            title = (t if len(t) <= ROW_PREVIEW_MAX
+                     else t[:ROW_PREVIEW_MAX] + "…")
             title_font = (FONT, 12)
         else:
             title = item["name"]
@@ -488,7 +530,7 @@ class LibraryManager(tk.Toplevel):
         if dlg.result is None or not dlg.result.strip():
             return
         content = dlg.result
-        default_name = content.strip().replace("\n", " ")[:10]
+        default_name = content.strip().replace("\n", " ")[:AUTO_NAME_MAX]
         meta = MetaDialog(self, title="문자/문구 등록", name=default_name)
         self.wait_window(meta)
         if not meta.result:
@@ -617,10 +659,70 @@ class LibraryManager(tk.Toplevel):
             self._refresh(cat)
             self._notify()
 
+    # ── 내보내기 / 가져오기 (개선안 30) ────────────────
+    def _export_tab(self):
+        """지금 보고 있는 탭의 항목을 통째로 zip 으로 내보낸다."""
+        cat = self.current_cat
+        if cat == "내장":
+            messagebox.showinfo(
+                "내보낼 수 없음",
+                "내장 문자는 프로그램에 들어 있어 따로 주고받을 필요가 없습니다.",
+                parent=self)
+            return
+        items = library.list_items(cat)
+        if not items:
+            messagebox.showinfo("항목 없음", f"'{cat}' 탭에 내보낼 항목이 없습니다.",
+                                parent=self)
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self, title=f"'{cat}' 내보내기",
+            defaultextension=".zip", initialfile=f"hwp_palette_{cat}.zip",
+            filetypes=[("hwp_palette 라이브러리", "*.zip")])
+        if not path:
+            return
+        try:
+            n = library.export_items([(cat, it) for it in items], path)
+        except Exception as e:
+            applog.exc(f"라이브러리 내보내기 실패 ({cat})", e)
+            messagebox.showerror("내보내기 실패", f"{type(e).__name__}: {e}",
+                                 parent=self)
+            return
+        skipped = len(items) - n
+        msg = f"'{cat}' {n}개를 내보냈습니다.\n{pathlib.Path(path).name}"
+        if skipped:
+            msg += f"\n\n(조각 파일이 없어 {skipped}개는 빠졌습니다 — app.log 참고)"
+        messagebox.showinfo("내보내기 완료", msg, parent=self)
+
+    def _import_archive(self):
+        """받은 zip 을 라이브러리에 추가한다. 덮어쓰기는 하지 않는다."""
+        path = filedialog.askopenfilename(
+            parent=self, title="라이브러리 가져오기",
+            filetypes=[("hwp_palette 라이브러리", "*.zip"), ("모든 파일", "*.*")])
+        if not path:
+            return
+        try:
+            r = library.import_archive(path)
+        except Exception as e:
+            applog.exc(f"라이브러리 가져오기 실패 ({path})", e)
+            messagebox.showerror("가져오기 실패", f"{type(e).__name__}: {e}",
+                                 parent=self)
+            return
+        lines = [f"{r['added']}개를 가져왔습니다. (기존 항목은 그대로 둡니다)"]
+        if r["renamed"]:
+            lines.append("\n이름이 겹쳐 바꾼 항목:")
+            lines += [f"  {a} → {b}" for a, b in r["renamed"][:8]]
+        if r["relabeled"]:
+            lines.append("\n라벨이 겹쳐 바꾼 항목:")
+            lines += [f"  \\{a}\\ → \\{b}\\" for a, b in r["relabeled"][:8]]
+            lines.append("(라벨을 그대로 두면 마크다운 변환에서 호출되지 않습니다)")
+        messagebox.showinfo("가져오기 완료", "\n".join(lines), parent=self)
+        self._refresh()
+        self._notify()
+
     def _edit(self, cat, item):
         """등록된 항목의 이름·라벨·분류 수정 (id 유지 → 팔레트 연결 안 깨짐)."""
         meta = MetaDialog(self, title=f"{cat} 수정", name=item["name"],
-                          label=item.get("label", ""))
+                          label=item.get("label", ""), exclude_id=item["id"])
         try:
             meta.group_var.set(item.get("group", library.DEFAULT_GROUP))
         except Exception:

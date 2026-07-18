@@ -194,5 +194,63 @@ class BuildLibraryPlanTest(unittest.TestCase):
             self.assertEqual(ops[0][2], ["담당"], f"{newline!r} 처리 실패")
 
 
+class StyleSpanTest(unittest.TestCase):
+    r"""서식 감싸기 문법 \서식라벨\내용\/ (개선안 27)."""
+
+    def setUp(self):
+        self.lookup = _lookup(
+            굵게=("서식", {"fields": {"굵게": True}}),
+            빨강=("서식", {"fields": {"글자색": 255}}),
+            인사말=("문자", {"text": "안녕하세요"}),
+            결재란=("템플릿", {"slot_count": 1, "file": "a.hwp"}),
+        )
+
+    def _rich(self, text):
+        ops, warns = md_parser.build_library_plan(text, self.lookup)
+        return ops, warns
+
+    def test_감싼_구간에만_서식이_붙는다(self):
+        ops, _ = self._rich("앞 \\굵게\\중요\\/ 뒤")
+        self.assertEqual(ops[0][0], "rich_line")
+        segs = ops[0][1]
+        self.assertEqual([s["text"] for s in segs], ["앞 ", "중요", " 뒤"])
+        self.assertEqual([s["style"] for s in segs],
+                         [None, {"굵게": True}, None])
+
+    def test_한_줄에_여러_구간(self):
+        ops, _ = self._rich("\\굵게\\가\\/ 와 \\빨강\\나\\/")
+        segs = ops[0][1]
+        self.assertEqual([s["text"] for s in segs], ["가", " 와 ", "나"])
+        self.assertEqual(segs[0]["style"], {"굵게": True})
+        self.assertEqual(segs[2]["style"], {"글자색": 255})
+
+    def test_감싼_내용_안의_문자_라벨도_치환된다(self):
+        ops, _ = self._rich("\\굵게\\\\인사말\\\\/")
+        self.assertEqual(ops[0][1][0]["text"], "안녕하세요")
+
+    def test_서식이_아닌_라벨은_감싸기로_보지_않는다(self):
+        # 문자 라벨 뒤에 우연히 \/ 가 와도 서식 구간이 되면 안 된다
+        ops, _ = self._rich("\\인사말\\뭔가\\/")
+        self.assertEqual(ops[0][0], "line")
+
+    def test_감싸기가_없으면_기존대로_line(self):
+        ops, _ = self._rich("그냥 문장")
+        self.assertEqual(ops[0], ("line", "그냥 문장"))
+
+    def test_내용_없이_서식_라벨만_쓰면_안내한다(self):
+        _, warns = self._rich("\\굵게\\")
+        self.assertEqual(len(warns), 1)
+        self.assertIn("감쌀 내용이 필요", warns[0])
+
+    def test_템플릿_줄은_감싸기보다_우선한다(self):
+        ops, _ = self._rich("\\결재란\\\n담당")
+        self.assertEqual(ops[0][0], "template")
+
+    def test_has_style_spans(self):
+        self.assertTrue(md_parser.has_style_spans("\\굵게\\가\\/"))
+        self.assertFalse(md_parser.has_style_spans("\\인사말\\"))
+        self.assertFalse(md_parser.has_style_spans(""))
+
+
 if __name__ == "__main__":
     unittest.main()

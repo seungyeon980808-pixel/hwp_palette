@@ -14,6 +14,11 @@ r"""커스텀 팔레트 — 사용자가 만드는 탭 + 블럭.
 
 저장은 settings.config(config.json)의 "palette_tabs" 키. 개인 로컬 데이터.
 기본 서식(‘기본 서식으로 변환’ 대상)은 "default_format" 키.
+
+이 두 키의 **소유자는 이 모듈**이다 (개선안 21). settings.py 는 같은 파일의
+"profiles"/"active_profile" 을 소유한다. 전체 소유권 표는
+settings.CONFIG_KEY_OWNERS 에 있다. 파일 입출력은 settings 의
+get_config_value/set_config_value 만 거친다 — 읽고 쓰는 코드를 두 벌 두지 않기 위함.
 """
 
 import copy
@@ -71,7 +76,7 @@ def _migrate_template_ref(block):
     library 를 최상위에서 import 하면 순환 참조라 지역 import.
     """
     try:
-        import library
+        import library         # 순환 참조 회피 (library → palette → library)
         for it in library.load().get("템플릿", []):
             if it.get("name") == block.get("template"):
                 block["ref"] = it["id"]

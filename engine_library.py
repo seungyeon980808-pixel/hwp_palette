@@ -12,6 +12,8 @@ hwp_engine(코어)이 '한글을 어떻게 조작하는가'를 맡는다면, 이
 한글 조작은 전부 hwp_engine 의 것을 그대로 쓴다(연결 인스턴스를 공유하기 위함).
 """
 
+import time
+
 import applog
 import hwp_engine
 from hwp_engine import (
@@ -456,6 +458,40 @@ def apply_default_format(fmt, text=None):
         insert_plain(text)
 
 
+def insert_rich_line(segments):
+    r"""서식 구간이 섞인 한 줄을 삽입한다 (개선안 27 — \서식\내용\/).
+
+    구간마다 [삽입 전 위치 기록 → 삽입 → 그 구간만 다시 선택 → 서식 적용]을
+    반복한다. 선택을 걸면 커서가 구간 앞쪽으로 갈 수 있으므로, 다음 구간을
+    이어 쓰기 전에 **반드시 끝 위치로 되돌려 놓는다** — 안 그러면 두 번째
+    구간부터 글자가 앞에 끼어 들어간다.
+
+    서식 적용에 실패해도 글자는 이미 들어가 있다. 그 경우 서식만 포기하고
+    계속 진행한다 — 변환 전체를 되돌리는 것보다 낫다.
+    """
+    hwp = _h()
+    for seg in segments:
+        text = seg.get("text") or ""
+        if not text:
+            continue
+        start = hwp.GetPos()
+        insert_plain(text)
+        end = hwp.GetPos()
+        delta = seg.get("style")
+        if not delta:
+            continue
+        try:
+            if hwp.select_text_by_get_pos(start, end):
+                apply_charshape_delta(delta)
+            else:
+                applog.warn(f"서식 감싸기: 구간 선택 실패 — 서식 없이 삽입됨 ({text[:20]!r})")
+        except Exception as e:
+            applog.exc(f"서식 감싸기 적용 실패 ({text[:20]!r}) — 글자는 삽입됨", e)
+        finally:
+            hwp.HAction.Run("Cancel")       # 선택 해제
+            hwp.SetPos(*end)                # 다음 구간은 이 줄 끝에서 이어 쓴다
+
+
 # ── 라이브러리: 마크다운(\라벨\) 변환 실행 ───────────────
 def execute_library_plan(ops, template_path_fn, form_path_fn=None):
     r"""parser.build_library_plan()의 실행 계획을 문서에 반영한다.
@@ -470,7 +506,6 @@ def execute_library_plan(ops, template_path_fn, form_path_fn=None):
     양식('form')은 성격이 달라 따로 처리한다 — 새 문서를 여는 것이라 마커를
     심어둔 문서 자체가 사라진다. 그래서 계획에 양식이 있으면 그것만 처리한다.
     """
-    import time as _time
     hwp = _h()
     act = hwp.HAction
 
@@ -489,7 +524,7 @@ def execute_library_plan(ops, template_path_fn, form_path_fn=None):
         filled = fill_slots(hwp.GetPos(), fills, end_para=None)
         return {"templates": 0, "slots_filled": filled, "forms": 1}
 
-    marker_base = "◈LIB%d_" % (int(_time.time() * 1000) % 10**9)
+    marker_base = "◈LIB%d_" % (int(time.time() * 1000) % 10**9)
 
     # ① 텍스트/마커 순차 삽입
     templates = []
@@ -501,6 +536,8 @@ def execute_library_plan(ops, template_path_fn, form_path_fn=None):
         if op[0] == "line":
             if op[1]:
                 insert_plain(op[1])
+        elif op[0] == "rich_line":
+            insert_rich_line(op[1])
         else:                               # ('template', item, fills)
             insert_plain(marker_base + str(len(templates)) + "◈")
             templates.append(op)

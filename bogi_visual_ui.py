@@ -13,6 +13,7 @@ from tkinter import messagebox
 
 import settings
 import exam_engine
+import hwp_engine
 
 BG   = "#f5f5f7"
 CARD = "#ffffff"
@@ -200,14 +201,12 @@ class BogiVisualEditor(tk.Toplevel):
     # ── 미리 삽입 / 저장 ──────────────────────────────
     def _preview_hwp(self):
         try:
-            import hwp_engine
             hwp_engine.connect()
         except Exception as e:
             messagebox.showerror("연결 실패",
                                  f"한글을 먼저 실행해주세요.\n{e}", parent=self)
             return
         try:
-            import hwp_engine
             spec = settings.get_active_spec()
             spec["bogi_box"] = dict(self.box)      # 현재 미저장 값으로
             hwp_engine.set_active_spec(spec)

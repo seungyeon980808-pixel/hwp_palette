@@ -178,7 +178,7 @@ class SettingsWindow(tk.Toplevel):
             groups[group][1] = r + 1
 
     def _open_bogi_visual(self):
-        import bogi_visual_ui
+        import bogi_visual_ui  # 순환 참조 회피 (bogi_visual_ui → settings_ui)
 
         def after_saved():
             # 시각 편집에서 저장 → 폼도 새 값으로 갱신 + 상위 콜백 전달

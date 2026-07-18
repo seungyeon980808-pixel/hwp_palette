@@ -356,11 +356,15 @@ GUIDE_TEXT = (
     "■ 라이브러리 문법 (등록한 항목 호출)\n"
     "  \\라벨\\        → 문자·문구 삽입 / 템플릿 삽입\n"
     "  \\원1\\ \\로마3\\ → 내장 문자 (① Ⅲ …)\n"
+    "  \\서식\\내용\\/  → 감싼 부분에만 그 서식 적용 (예: \\굵게\\중요\\/)\n"
     "  템플릿은 단독 줄로 쓰고, 아랫줄들이\n"
     "  템플릿 속 빈칸 \\ 에 위에서부터 순서대로 채워집니다.\n"
     "  (비울 칸에는 '-' 한 줄)\n"
     "\n"
-    "※ 변환할 부분을 드래그 → 마크다운 변환 (Ctrl+T)"
+    "※ 변환할 부분을 드래그 → 마크다운 변환 (Ctrl+T)\n"
+    "※ 되돌리기: 한글 창에서 Ctrl+Z. 템플릿 삽입·변환은 여러 동작이 묶여\n"
+    "   있어 여러 번 눌러야 완전히 돌아갑니다. (되돌리기는 한글이 하는 것이라\n"
+    "   이 창의 버튼으로는 취소되지 않습니다)"
 )
 tk.Label(guide_body, text=GUIDE_TEXT, font=("Consolas", 8),
          fg=TEXT, bg=SUBBG, justify="left").pack(anchor="w", padx=12, pady=10)
@@ -498,6 +502,7 @@ def render_palette():
 # 블럭 종류별 배경색·기호 — 환경설정 미리보기(palette_ui._make_tile/_tile_text)와
 # 반드시 같아야 한다. 'form'이 여기에만 빠져 있어서, 양식 블럭이 환경설정에서는
 # 📄+연녹색인데 메인 팔레트에서는 ƒ+흰 배경으로 보였다.
+# type "function"은 UI에서 '서식 조합'으로 부른다 (개선안 10 — 저장 키는 그대로).
 _BLOCK_COLOR = {"char": CARD, "template": "#eef4ff",
                 "function": "#fff4e6", "form": "#eafaf1"}
 _BLOCK_PREFIX = {"template": "▦ ", "function": "ƒ ", "form": "📄 "}

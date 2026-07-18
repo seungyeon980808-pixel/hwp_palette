@@ -127,7 +127,8 @@ def _replace_char_tokens(line, lookup, warnings):
             warnings.append(
                 f"{entry[0]} 라벨은 한 줄에 단독으로 써주세요: \\{label}\\")
         elif entry and entry[0] == '서식':
-            warnings.append(f"서식 라벨은 아직 변환 미지원: \\{label}\\")
+            warnings.append(
+                f"서식은 감쌀 내용이 필요합니다: \\{label}\\내용\\/ 형태로 써주세요")
         else:
             warnings.append(f"등록되지 않은 라벨: \\{label}\\")
         return m.group(0)
@@ -137,12 +138,61 @@ def _replace_char_tokens(line, lookup, warnings):
 SKIP_MARK = '-'      # 이 줄은 해당 빈칸을 비워둔다
 
 
+# ── 서식 감싸기 문법 (개선안 27) ────────────────────────
+# \굵게\감쌀 내용\/  →  '굵게' 서식을 '감쌀 내용'에만 입힌다.
+#
+# 닫는 표시로 `\/` 를 고른 이유: 역슬래시는 이미 두 가지 뜻으로 쓰이는데
+#   \ 하나  = 템플릿 빈칸 표시
+#   \라벨\  = 라이브러리 호출
+# `\/` 는 그 어느 쪽과도 겹치지 않아, 기존 문서를 다시 해석하게 만들지 않는다.
+# 내용 안에 다시 감싸기를 넣는 것(중첩)은 지원하지 않는다 — 비단조롭게 복잡해지고
+# 실제로 쓸 일이 거의 없다.
+STYLE_SPAN_RE = re.compile(r'\\([^\\\r\n]+?)\\(.*?)\\/')
+
+
+def has_style_spans(text):
+    return bool(STYLE_SPAN_RE.search(text or ''))
+
+
+def build_segments(line, lookup, warnings):
+    """서식 구간이 섞인 줄을 조각으로 나눈다.
+
+    반환: [{'text': str, 'style': 델타dict 또는 None}, ...]
+          서식 감싸기가 하나도 없으면 None (호출부는 기존 방식으로 처리).
+
+    라벨이 '서식' 분류가 아니면 감싸기로 보지 않고 원문 그대로 둔다 — 문자
+    라벨 뒤에 우연히 `\\/` 가 오는 경우까지 서식으로 오해하면 안 되기 때문.
+    """
+    spans = []
+    for m in STYLE_SPAN_RE.finditer(line):
+        entry = lookup.get(m.group(1).strip())
+        if entry and entry[0] == '서식':
+            spans.append((m, entry[1]))
+    if not spans:
+        return None
+
+    segs, last = [], 0
+    for m, item in spans:
+        if m.start() > last:
+            segs.append({"text": _replace_char_tokens(line[last:m.start()],
+                                                      lookup, warnings),
+                         "style": None})
+        segs.append({"text": _replace_char_tokens(m.group(2), lookup, warnings),
+                     "style": item.get("fields") or {}})
+        last = m.end()
+    if last < len(line):
+        segs.append({"text": _replace_char_tokens(line[last:], lookup, warnings),
+                     "style": None})
+    return [s for s in segs if s["text"]]
+
+
 def build_library_plan(text, lookup):
     r"""선택 텍스트 → 실행 계획.
 
     lookup: {라벨: (분류명, 항목dict)} — library.label_lookup() 결과.
     반환: (ops, warnings)
       ops: ('line', 텍스트) — 그대로 삽입할 한 줄
+           ('rich_line', [조각들]) — 서식 감싸기(\서식\내용\/)가 섞인 한 줄
            ('template', 항목, [줄들]) — 템플릿을 커서에 삽입 + 빈칸(\) 순서대로 채움
            ('form', 항목, [줄들])     — 양식을 새 문서로 열고 + 빈칸 채움
              줄이 '-' 하나면 그 빈칸은 건너뛴다(비워둠).
@@ -178,6 +228,10 @@ def build_library_plan(text, lookup):
                 ops.append((kind, item, fills))
                 i = j
                 continue
-        ops.append(('line', _replace_char_tokens(lines[i], lookup, warnings)))
+        segs = build_segments(lines[i], lookup, warnings)
+        if segs is not None:
+            ops.append(('rich_line', segs))
+        else:
+            ops.append(('line', _replace_char_tokens(lines[i], lookup, warnings)))
         i += 1
     return ops, warnings
