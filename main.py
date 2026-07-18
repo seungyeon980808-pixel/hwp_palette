@@ -55,6 +55,7 @@ import engine_library
 import exam_engine
 import settings
 import settings_ui
+import form_fill_ui
 import library
 import library_ui
 import palette
@@ -90,6 +91,11 @@ def fn_open_settings():
 
 def fn_open_library():
     library_ui.open_manager(root)
+
+
+def fn_open_form_fill():
+    """양식 채우기 — 채울 자리를 뽑아 AI에 넘기고, 채운 걸 받아 넣는다."""
+    form_fill_ui.open_form_fill(root)
 
 
 # ── 한컴 연결 ───────────────────────────────────────────
@@ -472,6 +478,9 @@ tk.Button(sub_btn, text="↺ 기본 서식으로 변환", command=fn_reset_forma
 tk.Button(sub_btn, text="🖼 사진", command=fn_pick_photo,
           font=(FONT, 9), fg=TEXT, bg=CARD, activebackground=BORDER,
           bd=1, padx=12, pady=7, cursor="hand2").pack(side="left")
+tk.Button(sub_btn, text="📝 양식 채우기", command=fn_open_form_fill,
+          font=(FONT, 9), fg=TEXT, bg=CARD, activebackground=BORDER,
+          bd=1, padx=12, pady=7, cursor="hand2").pack(side="left", padx=(4, 0))
 
 # ── 커스텀 팔레트 (탭 + 블럭) ──────────────────────────
 tk.Frame(root, bg=BORDER, height=1).pack(fill="x", padx=14, pady=(8, 0))

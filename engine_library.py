@@ -305,6 +305,30 @@ def count_slots_in_file(path):
             applog.exc("빈칸 세기용 임시 문서 닫기 실패 — 창이 남아 있을 수 있음", e)
 
 
+def export_as_hwpx(src_path, dst_path):
+    """.hwp/.hwpx 를 HWPX 로 저장한다. 반환: 성공 여부.
+
+    HWPX 여야 빈칸을 안전하게 채울 수 있다 — .hwp(바이너리)는 문단 레코드를
+    직접 고치기 어렵지만, HWPX 는 zip+XML 이라 글자만 갈아끼울 수 있다
+    (실측 2026-07-19). form_fill 모듈이 그 일을 한다.
+
+    지금 열려 있는 문서를 건드리지 않으려고 별도 탭에서 열었다 닫는다
+    (count_slots_in_file 과 같은 방식).
+    """
+    hwp = _h()
+    saved = hwp.XHwpDocuments.Count
+    try:
+        hwp.XHwpDocuments.Add(1)          # 1 = 새 탭으로 열기
+        hwp.open(str(src_path))
+        return bool(hwp.save_as(str(dst_path), format="HWPX"))
+    finally:
+        try:
+            if hwp.XHwpDocuments.Count > saved:
+                hwp.XHwpDocuments.Active_XHwpDocument.Close(isDirty=False)
+        except Exception as e:
+            applog.exc("HWPX 변환용 임시 문서 닫기 실패 — 창이 남아 있을 수 있음", e)
+
+
 def open_form(path):
     r"""양식 파일을 새 문서로 연다 (용지·여백·머리말까지 원본 그대로).
 
