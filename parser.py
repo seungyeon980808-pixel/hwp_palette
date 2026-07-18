@@ -104,120 +104,263 @@ def strip_circled_markers(text):
     return re.sub(CIRCLED_MARKER_PATTERN, '', text)
 
 
-# ── 라이브러리 마크다운 (\라벨\ 문법) ─────────────────────
-# \인사말\ → 문자 치환(줄 안 어디서든), \보기\ 단독 줄 → 템플릿 삽입 +
-# 아랫줄들이 템플릿 속 빈칸(\)에 순서대로 들어간다.
+# ══════════════════════════════════════════════════════
+# 라이브러리 마크다운 문법
+# ══════════════════════════════════════════════════════
+r"""두 가지 모양이 있고, 역할이 다르다.
+
+    \인사말\              등록해 둔 것을 **꺼내 넣기** (붙여넣기)
+    \굵게{옳지 않은}      이 부분에 **적용하기** (형광펜)
+
+왜 모양이 다른가 — 붙여넣기는 '무엇을'만 있으면 되지만, 형광펜은 '어디부터
+어디까지'가 필요하다. 그래서 후자는 범위를 표시할 방법이 있어야 한다.
+
+**여는 글자와 닫는 글자가 달라야 한다** (LaTeX 구조 차용, 2026-07-18):
+    괄호 ( 가(나)다 )   → 여는 것/닫는 것이 달라서 안에 또 넣어도 짝을 셀 수 있다
+    따옴표 " 가"나"다 " → 같아서 못 센다
+예전엔 `\서식\내용\/` 처럼 `\` 하나로 열고 닫으려 해서, 내용 안에 `\라벨\` 을
+넣으면 어디가 끝인지 알 수 없었다. `{ }` 로 닫으면 그 문제가 통째로 사라진다.
+
+LaTeX 와 다른 점: 진짜 LaTeX 는 여러 서식을 겹칠 때 중첩(`\textbf{\itshape{…}}`)
+하거나 선언형(`{\bfseries\itshape …}`)을 쓰는데, 선언형은 '명령 뒤 공백 한 칸'이
+의미를 갖는 함정이 있다. 여기서는 명령을 나열하되 범위는 `{ }` 로 받는다:
+    \굵게\기울임\크기15{내용}
+"""
+
+import func_catalog
+
+# \라벨\ — 등록한 것을 꺼내 넣기
 LIB_TOKEN_RE = re.compile(r'\\([^\\\r\n]+?)\\')
+# \명령 — 서식 명령 하나 (이름에는 \ { } 가 들어갈 수 없다)
+CMD_RE = re.compile(r'\\([^\\{}\r\n]+)')
+# 라이브러리 문법이 하나라도 있는가 (변환 경로를 고를 때 씀)
+_ANY_TOKEN_RE = re.compile(r'\\[^\\\r\n]+?\\|\\[^\\{}\r\n]+\{')
+
+_MAX_NEST = 8            # 중첩 깊이 한도 (실수로 무한 중첩되는 것 방지)
+
+# 값이 필요 없는 글자 서식 — 이름이 곧 필드명이다
+_TOGGLES = ("굵게", "기울임", "밑줄")
+
+# 문단 전체에 걸리는 것들. 줄 일부만 감쌌는데 문단이 통째로 바뀌면 당황스러우므로
+# 인라인 문법에서는 거부한다 (팔레트의 '서식 조합' 블럭에서 쓰면 된다).
+_PARA_ONLY = {"가운데정렬", "왼쪽정렬", "양쪽정렬", "줄간격", "들여쓰기",
+              "내어쓰기", "왼쪽여백", "오른쪽여백", "어절단위 줄바꿈",
+              "자간 자동조절"}
+
+# 색 이름 → HWP 색값(R + G<<8 + B<<16)
+_COLOR_NAMES = {
+    "검정": (0, 0, 0), "빨강": (255, 0, 0), "파랑": (0, 0, 255),
+    "초록": (0, 128, 0), "노랑": (255, 255, 0), "회색": (128, 128, 128),
+    "흰색": (255, 255, 255),
+}
 
 
 def has_library_tokens(text):
-    return bool(LIB_TOKEN_RE.search(text or ''))
+    return bool(_ANY_TOKEN_RE.search(text or ''))
 
 
-def _replace_char_tokens(line, lookup, warnings):
-    r"""줄 안의 \라벨\ 중 '문자' 항목만 내용으로 치환. 나머지는 원문 유지 + 경고."""
-    def repl(m):
-        label = m.group(1).strip()
-        entry = lookup.get(label)
-        if entry and entry[0] == '문자':
-            return entry[1]['text']
-        # 템플릿·양식은 줄 단위로만 처리된다(빈칸을 아랫줄들로 채우는 구조라
-        # 줄 중간에서는 의미가 없다). 등록은 돼 있으니 '없는 라벨'로 말하면 안 된다.
-        if entry and entry[0] in ('템플릿', '양식'):
-            warnings.append(
-                f"{entry[0]} 라벨은 한 줄에 단독으로 써주세요: \\{label}\\")
-        elif entry and entry[0] == '서식':
-            warnings.append(
-                f"서식은 감쌀 내용이 필요합니다: \\{label}\\내용\\/ 형태로 써주세요")
-        else:
-            warnings.append(f"등록되지 않은 라벨: \\{label}\\")
-        return m.group(0)
-    return LIB_TOKEN_RE.sub(repl, line)
+def has_style_spans(text):
+    r"""서식 적용(`\명령{...}`)이 들어 있는가 — 모양만 본다."""
+    return bool(re.search(r'\\[^\\{}\r\n]+\{', text or ''))
+
+
+def _rgb(r, g, b):
+    return r + (g << 8) + (b << 16)
+
+
+def _parse_color(raw):
+    v = raw.strip()
+    if v in _COLOR_NAMES:
+        return _rgb(*_COLOR_NAMES[v])
+    m = re.fullmatch(r'#?([0-9A-Fa-f]{6})', v)
+    if m:
+        h = m.group(1)
+        return _rgb(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    return None
+
+
+def _match_font(name):
+    """알려진 글꼴 이름과 맞춰본다. 못 찾으면 None.
+
+    아무 문자열이나 글꼴로 받아주면 '함초롱'(오타) 같은 것이 조용히 통과해
+    아무 일도 안 일어난다. 목록에 있는 것만 인정하고, 목록 밖 글꼴은
+    `\글꼴맑은 고딕` 처럼 이름을 붙여 쓰게 한다.
+    """
+    if name in func_catalog.COMMON_FONTS:
+        return name
+    hits = [f for f in func_catalog.COMMON_FONTS if f.startswith(name)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def resolve_style_token(tok, lookup, warnings):
+    r"""서식 명령 하나 → 글자서식 델타. 해석 못 하면 None.
+
+    받는 모양:
+      굵게 · 기울임 · 밑줄      토글
+      15 · 15.5                맨 숫자는 크기(pt) — 제일 흔하므로 이름 생략 허용
+      크기15 · 자간-5           이름+값
+      색빨강 · 색#FF0000        색
+      함초롬바탕                아는 글꼴 이름
+      글꼴맑은 고딕             목록 밖 글꼴을 쓸 때
+      내강조                    등록해 둔 '서식' 라벨
+    """
+    t = (tok or "").strip()
+    if not t:
+        return None
+    if t in _TOGGLES:
+        return {t: True}
+    if t in _PARA_ONLY:
+        warnings.append(
+            f"'{t}'는 문단 전체에 걸리는 서식이라 줄 일부에는 쓸 수 없습니다 "
+            f"— 팔레트의 '서식 조합' 블럭을 쓰세요")
+        return None
+    entry = lookup.get(t)
+    if entry and entry[0] == '서식':
+        return dict(entry[1].get("fields") or {})
+    m = re.fullmatch(r'(?:크기|글씨크기)?\s*(-?\d+(?:\.\d+)?)', t)
+    if m:
+        return {"크기": float(m.group(1))}
+    m = re.fullmatch(r'자간\s*(-?\d+)', t)
+    if m:
+        return {"자간": int(m.group(1))}
+    m = re.fullmatch(r'색\s*(.+)', t)
+    if m:
+        color = _parse_color(m.group(1))
+        if color is None:
+            warnings.append(f"모르는 색입니다: '{m.group(1).strip()}' "
+                            f"(쓸 수 있는 이름: {', '.join(_COLOR_NAMES)} 또는 #RRGGBB)")
+            return None
+        return {"글자색": color}
+    m = re.fullmatch(r'글꼴\s*(.+)', t)
+    if m:
+        return {"글꼴": m.group(1).strip()}
+    font = _match_font(t)
+    if font:
+        return {"글꼴": font}
+    warnings.append(f"모르는 서식입니다: \\{t}"
+                    f"  (등록한 서식 라벨이거나 굵게·기울임·밑줄·숫자·색·글꼴이어야 합니다)")
+    return None
 
 
 SKIP_MARK = '-'      # 이 줄은 해당 빈칸을 비워둔다
 
 
-# ── 서식 감싸기 문법 (개선안 27) ────────────────────────
-# \굵게\감쌀 내용\/  →  '굵게' 서식을 '감쌀 내용'에만 입힌다.
-#
-# 닫는 표시로 `\/` 를 고른 이유: 역슬래시는 이미 두 가지 뜻으로 쓰이는데
-#   \ 하나  = 템플릿 빈칸 표시
-#   \라벨\  = 라이브러리 호출
-# `\/` 는 그 어느 쪽과도 겹치지 않아, 기존 문서를 다시 해석하게 만들지 않는다.
-# 내용 안에 다시 감싸기를 넣는 것(중첩)은 지원하지 않는다 — 비단조롭게 복잡해지고
-# 실제로 쓸 일이 거의 없다.
-STYLE_CLOSE = '\\/'
+def _try_style_span(text, i, lookup, warnings, style, depth):
+    r"""text[i] 부터 `\명령\명령…{내용}` 을 읽는다. 아니면 None.
 
-
-def _find_style_spans(line, lookup):
-    r"""줄에서 서식 감싸기 구간을 찾는다. [(시작, 내용시작, 내용끝, 항목), ...]
-
-    정규식 하나로 `\\라벨\\(.*?)\\/` 를 훑으면 안 된다 (실측 실패 사례):
-      `\인사말\ \굵게\포인트\/`
-    에서 정규식은 **맨 앞 `\인사말\` 을 여는 표시로 잡고** 내용을
-    ` \굵게\포인트` 로 먹어버린다. 그러면 진짜 서식 구간이 사라져서, 굵게는
-    안 먹고 `\굵게\...\/` 가 문서에 그대로 남는다. 문자 라벨과 서식 감싸기를
-    한 줄에 쓰는 아주 흔한 경우가 통째로 깨진다.
-
-    그래서 **라벨을 하나씩 보며 '서식' 분류일 때만** 여는 표시로 인정하고,
-    거기서부터 닫는 표시를 찾는다. 서식이 아닌 라벨은 그냥 지나친다.
+    반환: (다음 위치, 조각들)
+    명령을 하나라도 해석 못 하면 서식 구간으로 보지 않는다 — 우연한 일치가
+    서식으로 오해받지 않게 하는 안전장치다.
     """
-    spans = []
-    i = 0
-    while True:
-        m = LIB_TOKEN_RE.search(line, i)
+    if depth > _MAX_NEST:
+        warnings.append("서식이 너무 깊게 중첩됐습니다")
+        return None
+    j, toks = i, []
+    while j < len(text) and text[j] == '\\':
+        m = CMD_RE.match(text, j)
         if not m:
-            return spans
-        entry = lookup.get(m.group(1).strip())
-        if entry and entry[0] == '서식':
-            close = line.find(STYLE_CLOSE, m.end())
-            if close != -1:
-                spans.append((m.start(), m.end(), close, entry[1]))
-                i = close + len(STYLE_CLOSE)
-                continue
-        i = m.end()
+            return None
+        toks.append(m.group(1))
+        j = m.end()
+    if not toks or j >= len(text) or text[j] != '{':
+        return None                 # 명령 뒤에 { 가 없으면 서식 구간이 아니다
+    fields = dict(style or {})
+    for tok in toks:
+        delta = resolve_style_token(tok, lookup, warnings)
+        if delta is None:
+            return None
+        fields.update(delta)        # 뒤에 온 것이 이긴다
+    segs, end = _parse_inline(text, j + 1, lookup, warnings, fields,
+                              depth + 1, stop_at_brace=True)
+    return end, segs
 
 
-def has_style_spans(text, lookup=None):
-    r"""서식 감싸기가 들어 있는가.
+def _try_label(text, i, lookup, warnings):
+    r"""text[i] 부터 `\라벨\` 을 읽는다. 아니면 None. 반환: (다음 위치, 넣을 글자)"""
+    m = LIB_TOKEN_RE.match(text, i)
+    if not m:
+        return None
+    label = m.group(1).strip()
+    entry = lookup.get(label)
+    if entry and entry[0] == '문자':
+        return m.end(), entry[1]['text']
+    # 아래는 전부 '원문 그대로 두고 경고' — 사용자가 눈으로 보고 고칠 수 있게
+    if entry and entry[0] in ('템플릿', '양식'):
+        warnings.append(f"{entry[0]} 라벨은 한 줄에 단독으로 써주세요: \\{label}\\")
+    elif entry and entry[0] == '서식':
+        warnings.append(f"서식은 적용할 내용이 필요합니다: \\{label}{{내용}} 처럼 써주세요")
+    else:
+        warnings.append(f"등록되지 않은 라벨: \\{label}\\")
+    return m.end(), m.group(0)
 
-    lookup 을 주면 '서식' 라벨인지까지 확인한다. 없으면 모양만 본다
-    (`\...\...\/` 꼴이 있는지).
+
+def _parse_inline(text, i, lookup, warnings, style, depth, stop_at_brace):
+    r"""줄을 왼쪽부터 읽어 조각 목록으로 만든다.
+
+    조각 = {'text': 글자들, 'style': 글자서식 델타 또는 None}
+    중첩된 서식은 바깥 서식 위에 덧씌워 **납작하게 펴서** 담는다
+    (엔진은 '이 구간에 이 서식' 목록만 알면 되므로 트리가 필요 없다).
     """
-    text = text or ''
-    if lookup is not None:
-        return bool(_find_style_spans(text, lookup))
-    return bool(re.search(r'\\[^\\\r\n]+?\\.*?' + re.escape(STYLE_CLOSE), text))
+    segs, buf = [], []
+
+    def flush():
+        if buf:
+            segs.append({"text": "".join(buf),
+                         "style": dict(style) if style else None})
+            buf.clear()
+
+    while i < len(text):
+        ch = text[i]
+        if ch == '\\':
+            nxt = text[i + 1:i + 2]
+            if nxt == '\\':                 # \\ → 글자 그대로의 역슬래시
+                buf.append('\\')
+                i += 2
+                continue
+            if nxt == '}':                  # \} → 글자 그대로의 닫는 중괄호
+                buf.append('}')
+                i += 2
+                continue
+            span = _try_style_span(text, i, lookup, warnings, style, depth)
+            if span:
+                end, sub = span
+                flush()
+                segs.extend(sub)
+                i = end
+                continue
+            lab = _try_label(text, i, lookup, warnings)
+            if lab:
+                end, txt = lab
+                buf.append(txt)
+                i = end
+                continue
+            buf.append(ch)                  # 홑 \ = 템플릿 빈칸 표시. 그대로 둔다
+            i += 1
+        elif ch == '}' and stop_at_brace:
+            flush()
+            return segs, i + 1
+        else:
+            buf.append(ch)
+            i += 1
+    if stop_at_brace:
+        warnings.append("서식을 닫는 } 가 없습니다")
+    flush()
+    return segs, i
 
 
 def build_segments(line, lookup, warnings):
-    """서식 구간이 섞인 줄을 조각으로 나눈다.
-
-    반환: [{'text': str, 'style': 델타dict 또는 None}, ...]
-          서식 감싸기가 하나도 없으면 None (호출부는 기존 방식으로 처리).
-
-    라벨이 '서식' 분류가 아니면 감싸기로 보지 않고 원문 그대로 둔다 — 문자
-    라벨 뒤에 우연히 `\\/` 가 오는 경우까지 서식으로 오해하면 안 되기 때문.
-    """
-    spans = _find_style_spans(line, lookup)
-    if not spans:
-        return None
-
-    segs, last = [], 0
-    for start, body_start, body_end, item in spans:
-        if start > last:
-            segs.append({"text": _replace_char_tokens(line[last:start],
-                                                      lookup, warnings),
-                         "style": None})
-        segs.append({"text": _replace_char_tokens(line[body_start:body_end],
-                                                  lookup, warnings),
-                     "style": item.get("fields") or {}})
-        last = body_end + len(STYLE_CLOSE)
-    if last < len(line):
-        segs.append({"text": _replace_char_tokens(line[last:], lookup, warnings),
-                     "style": None})
+    """한 줄 → 조각 목록. 서식이 없으면 조각 하나짜리 목록이 된다."""
+    segs, _ = _parse_inline(line, 0, lookup, warnings, None, 0,
+                            stop_at_brace=False)
     return [s for s in segs if s["text"]]
+
+
+def _replace_char_tokens(line, lookup, warnings):
+    r"""템플릿 빈칸에 넣을 값 — 서식은 못 쓰고 글자만 남긴다."""
+    segs = build_segments(line, lookup, warnings)
+    if any(s["style"] for s in segs):
+        warnings.append("빈칸에 넣는 줄에는 서식을 쓸 수 없어 무시했습니다")
+    return "".join(s["text"] for s in segs)
 
 
 def build_library_plan(text, lookup):
@@ -226,7 +369,7 @@ def build_library_plan(text, lookup):
     lookup: {라벨: (분류명, 항목dict)} — library.label_lookup() 결과.
     반환: (ops, warnings)
       ops: ('line', 텍스트) — 그대로 삽입할 한 줄
-           ('rich_line', [조각들]) — 서식 감싸기(\서식\내용\/)가 섞인 한 줄
+           ('rich_line', [조각들]) — 서식 적용(\굵게{내용})이 섞인 한 줄
            ('template', 항목, [줄들]) — 템플릿을 커서에 삽입 + 빈칸(\) 순서대로 채움
            ('form', 항목, [줄들])     — 양식을 새 문서로 열고 + 빈칸 채움
              줄이 '-' 하나면 그 빈칸은 건너뛴다(비워둠).
@@ -263,9 +406,10 @@ def build_library_plan(text, lookup):
                 i = j
                 continue
         segs = build_segments(lines[i], lookup, warnings)
-        if segs is not None:
+        if any(s["style"] for s in segs):
             ops.append(('rich_line', segs))
         else:
-            ops.append(('line', _replace_char_tokens(lines[i], lookup, warnings)))
+            # 서식이 없으면 굳이 조각으로 나눠 넣을 필요가 없다 (COM 호출 절약)
+            ops.append(('line', "".join(s["text"] for s in segs)))
         i += 1
     return ops, warnings

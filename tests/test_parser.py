@@ -194,83 +194,149 @@ class BuildLibraryPlanTest(unittest.TestCase):
             self.assertEqual(ops[0][2], ["담당"], f"{newline!r} 처리 실패")
 
 
+class StyleTokenTest(unittest.TestCase):
+    r"""서식 명령 하나를 해석하는 규칙 (\굵게, \15, \크기15, \색빨강, \함초롬바탕)."""
+
+    def setUp(self):
+        self.lookup = _lookup(내강조=("서식", {"fields": {"굵게": True,
+                                                        "글자색": 255}}))
+        self.warns = []
+
+    def r(self, tok):
+        return md_parser.resolve_style_token(tok, self.lookup, self.warns)
+
+    def test_토글(self):
+        self.assertEqual(self.r("굵게"), {"굵게": True})
+        self.assertEqual(self.r("기울임"), {"기울임": True})
+        self.assertEqual(self.r("밑줄"), {"밑줄": True})
+
+    def test_맨_숫자는_크기로_본다(self):
+        self.assertEqual(self.r("15"), {"크기": 15.0})
+        self.assertEqual(self.r("10.5"), {"크기": 10.5})
+
+    def test_이름_붙인_값(self):
+        self.assertEqual(self.r("크기15"), {"크기": 15.0})
+        self.assertEqual(self.r("자간-5"), {"자간": -5})
+
+    def test_색_이름과_코드(self):
+        self.assertEqual(self.r("색빨강"), {"글자색": 255})          # R=255
+        self.assertEqual(self.r("색#0000FF"), {"글자색": 255 << 16})  # B=255
+
+    def test_아는_글꼴은_그대로(self):
+        self.assertEqual(self.r("함초롬바탕"), {"글꼴": "함초롬바탕"})
+
+    def test_목록에_없는_글꼴은_이름을_붙여_쓴다(self):
+        self.assertEqual(self.r("글꼴나눔고딕"), {"글꼴": "나눔고딕"})
+
+    def test_글꼴_오타는_조용히_통과시키지_않는다(self):
+        # '함초롱'은 실제 글꼴명이 아니다 (함초롬바탕/함초롬돋움)
+        self.assertIsNone(self.r("함초롱"))
+        self.assertIn("모르는 서식", self.warns[0])
+
+    def test_등록한_서식_라벨도_명령으로_쓴다(self):
+        self.assertEqual(self.r("내강조"), {"굵게": True, "글자색": 255})
+
+    def test_문단_서식은_거부하고_이유를_알려준다(self):
+        self.assertIsNone(self.r("가운데정렬"))
+        self.assertIn("문단 전체", self.warns[0])
+
+
 class StyleSpanTest(unittest.TestCase):
-    r"""서식 감싸기 문법 \서식라벨\내용\/ (개선안 27)."""
+    r"""서식 적용 문법 \굵게{내용} — LaTeX 구조 차용."""
 
     def setUp(self):
         self.lookup = _lookup(
-            굵게=("서식", {"fields": {"굵게": True}}),
-            빨강=("서식", {"fields": {"글자색": 255}}),
+            내강조=("서식", {"fields": {"굵게": True}}),
             인사말=("문자", {"text": "안녕하세요"}),
             결재란=("템플릿", {"slot_count": 1, "file": "a.hwp"}),
         )
 
     def _rich(self, text):
-        ops, warns = md_parser.build_library_plan(text, self.lookup)
-        return ops, warns
+        return md_parser.build_library_plan(text, self.lookup)
 
     def test_감싼_구간에만_서식이_붙는다(self):
-        ops, _ = self._rich("앞 \\굵게\\중요\\/ 뒤")
+        ops, _ = self._rich("다음 중 \\굵게{옳지 않은} 것은?")
         self.assertEqual(ops[0][0], "rich_line")
         segs = ops[0][1]
-        self.assertEqual([s["text"] for s in segs], ["앞 ", "중요", " 뒤"])
+        self.assertEqual([s["text"] for s in segs],
+                         ["다음 중 ", "옳지 않은", " 것은?"])
         self.assertEqual([s["style"] for s in segs],
                          [None, {"굵게": True}, None])
 
-    def test_한_줄에_여러_구간(self):
-        ops, _ = self._rich("\\굵게\\가\\/ 와 \\빨강\\나\\/")
+    def test_명령을_여러_개_쌓는다(self):
+        """원래 원했던 것 — 굵게+기울임+15pt 를 한 번에."""
+        ops, _ = self._rich("\\굵게\\기울임\\크기15{나는 이제 할 수 있는게 없다.}")
         segs = ops[0][1]
-        self.assertEqual([s["text"] for s in segs], ["가", " 와 ", "나"])
+        self.assertEqual(segs[0]["text"], "나는 이제 할 수 있는게 없다.")
+        self.assertEqual(segs[0]["style"],
+                         {"굵게": True, "기울임": True, "크기": 15.0})
+
+    def test_쌓는_순서는_결과에_영향_없다(self):
+        a, _ = self._rich("\\굵게\\크기15{x}")
+        b, _ = self._rich("\\크기15\\굵게{x}")
+        self.assertEqual(a[0][1][0]["style"], b[0][1][0]["style"])
+
+    def test_내용_안에_라벨을_넣을_수_있다(self):
+        """예전 \\...\\ 문법으로는 불가능했던 것."""
+        ops, _ = self._rich("\\굵게{안녕 \\인사말\\ 님}")
+        segs = ops[0][1]
+        self.assertEqual(segs[0]["text"], "안녕 안녕하세요 님")
         self.assertEqual(segs[0]["style"], {"굵게": True})
-        self.assertEqual(segs[2]["style"], {"글자색": 255})
 
-    def test_감싼_내용_안의_문자_라벨도_치환된다(self):
-        ops, _ = self._rich("\\굵게\\\\인사말\\\\/")
-        self.assertEqual(ops[0][1][0]["text"], "안녕하세요")
+    def test_내용_안에_빈칸_표시를_넣을_수_있다(self):
+        """이것도 예전엔 불가능했다."""
+        ops, _ = self._rich("\\굵게{준비물은 \\ 입니다}")
+        segs = ops[0][1]
+        self.assertEqual(segs[0]["text"], "준비물은 \\ 입니다")
 
-    def test_서식이_아닌_라벨은_감싸기로_보지_않는다(self):
-        # 문자 라벨 뒤에 우연히 \/ 가 와도 서식 구간이 되면 안 된다
-        ops, _ = self._rich("\\인사말\\뭔가\\/")
+    def test_중첩하면_바깥_서식_위에_덧씌운다(self):
+        ops, _ = self._rich("\\굵게{가 \\기울임{나} 다}")
+        segs = ops[0][1]
+        self.assertEqual([s["text"] for s in segs], ["가 ", "나", " 다"])
+        self.assertEqual(segs[0]["style"], {"굵게": True})
+        self.assertEqual(segs[1]["style"], {"굵게": True, "기울임": True})
+        self.assertEqual(segs[2]["style"], {"굵게": True})
+
+    def test_안쪽이_바깥쪽을_덮어쓴다(self):
+        ops, _ = self._rich("\\크기10{가 \\크기20{나}}")
+        segs = ops[0][1]
+        self.assertEqual(segs[1]["style"]["크기"], 20.0)
+
+    def test_등록한_서식에_즉석_지정을_덧붙인다(self):
+        ops, _ = self._rich("\\내강조\\크기15{내용}")
+        self.assertEqual(ops[0][1][0]["style"], {"굵게": True, "크기": 15.0})
+
+    def test_역슬래시_두_개는_글자_역슬래시(self):
+        ops, _ = self._rich("경로는 C:\\\\폴더 입니다")
+        self.assertEqual(ops[0], ("line", "경로는 C:\\폴더 입니다"))
+
+    def test_모르는_명령이면_서식으로_보지_않는다(self):
+        """안전장치 — 우연한 일치가 서식으로 오해받으면 안 된다."""
+        ops, warns = self._rich("\\없는것{내용}")
         self.assertEqual(ops[0][0], "line")
+        self.assertIn("모르는 서식", warns[0])
 
-    def test_감싸기가_없으면_기존대로_line(self):
+    def test_닫는_중괄호가_없으면_알려준다(self):
+        _, warns = self._rich("\\굵게{안 닫음")
+        self.assertTrue(any("닫는 }" in w for w in warns))
+
+    def test_서식이_없으면_기존대로_line(self):
         ops, _ = self._rich("그냥 문장")
         self.assertEqual(ops[0], ("line", "그냥 문장"))
 
-    def test_내용_없이_서식_라벨만_쓰면_안내한다(self):
-        _, warns = self._rich("\\굵게\\")
-        self.assertEqual(len(warns), 1)
-        self.assertIn("감쌀 내용이 필요", warns[0])
-
-    def test_템플릿_줄은_감싸기보다_우선한다(self):
+    def test_템플릿_줄은_서식보다_우선한다(self):
         ops, _ = self._rich("\\결재란\\\n담당")
         self.assertEqual(ops[0][0], "template")
 
-    def test_has_style_spans(self):
-        self.assertTrue(md_parser.has_style_spans("\\굵게\\가\\/"))
-        self.assertFalse(md_parser.has_style_spans("\\인사말\\"))
-        self.assertFalse(md_parser.has_style_spans(""))
+    def test_서식_라벨을_내용_없이_쓰면_안내한다(self):
+        _, warns = self._rich("\\내강조\\")
+        self.assertIn("적용할 내용이 필요", warns[0])
 
-    def test_앞의_문자라벨이_서식구간을_삼키지_않는다(self):
-        """정규식 하나로 훑으면 맨 앞 \\인사말\\ 을 여는 표시로 잡아
-        ' \\굵게\\포인트' 를 내용으로 먹어버렸다 — 굵게가 통째로 사라지던 버그."""
-        ops, _ = self._rich("\\인사말\\ \\굵게\\포인트\\/ 감사합니다")
-        self.assertEqual(ops[0][0], "rich_line")
-        segs = ops[0][1]
-        self.assertEqual([s["text"] for s in segs],
-                         ["안녕하세요 ", "포인트", " 감사합니다"])
-        self.assertEqual(segs[1]["style"], {"굵게": True})
-
-    def test_서식_뒤에_문자라벨이_와도_된다(self):
-        ops, _ = self._rich("\\굵게\\가\\/ 뒤 \\인사말\\ 끝")
-        segs = ops[0][1]
-        self.assertEqual([s["text"] for s in segs], ["가", " 뒤 안녕하세요 끝"])
-
-    def test_문자라벨이_서식구간_양쪽에_있어도_된다(self):
-        ops, _ = self._rich("\\인사말\\ \\굵게\\핵심\\/ \\인사말\\")
-        segs = ops[0][1]
-        self.assertEqual([s["text"] for s in segs],
-                         ["안녕하세요 ", "핵심", " 안녕하세요"])
+    def test_has_library_tokens가_새_문법도_인식한다(self):
+        # 이게 안 되면 변환 자체가 라이브러리 경로로 안 간다
+        self.assertTrue(md_parser.has_library_tokens("\\굵게{내용}"))
+        self.assertTrue(md_parser.has_library_tokens("\\인사말\\"))
+        self.assertFalse(md_parser.has_library_tokens("그냥 문장"))
 
 
 if __name__ == "__main__":
