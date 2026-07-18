@@ -157,6 +157,28 @@ def fn_save():
         report_error("저장 실패", e)
 
 
+def _form_plan_conflict(ops):
+    r"""양식 변환이 다른 내용을 삼키게 되는 상황이면 안내 문구를, 아니면 None.
+
+    양식(\양식라벨\)은 새 문서를 열기 때문에, 지금 문서에 넣을 다른 줄이나
+    템플릿이 함께 선택돼 있으면 그것들은 어디에도 들어가지 못하고 사라진다.
+    """
+    forms = [o for o in ops if o[0] == "form"]
+    if not forms:
+        return None
+    if len(forms) > 1:
+        names = ", ".join(o[1].get("name", "?") for o in forms)
+        return (f"양식이 여러 개 선택됐습니다: {names}\n\n"
+                "양식은 새 문서를 열기 때문에 한 번에 하나만 변환할 수 있습니다.")
+    others = [o for o in ops
+              if o[0] != "form" and not (o[0] == "line" and not o[1].strip())]
+    if others:
+        return ("선택한 내용에 양식 말고 다른 줄이 섞여 있습니다.\n\n"
+                "양식은 새 문서를 열기 때문에, 나머지 내용은 넣을 곳이 없어\n"
+                "사라집니다. 양식 라벨(과 빈칸에 넣을 줄)만 선택해 변환해주세요.")
+    return None
+
+
 def fn_convert():
     """선택 영역 마크다운 변환 — 시험문제 문법 또는 라이브러리 \\라벨\\ 문법"""
     hwp_engine._diag("fn_convert: 버튼 눌린 직후")
@@ -183,6 +205,14 @@ def fn_convert():
             # 라이브러리 변환: \라벨\ → 문자 치환 / 템플릿 삽입 + 빈칸 채움
             lookup = library.label_lookup()
             ops, warns = md_parser.build_library_plan(selected, lookup)
+            # 양식은 '새 문서를 여는' 것이라, 같은 선택에 딸린 다른 내용은 갈 곳이
+            # 없다. 예전에는 선택을 지운 뒤에야 그 사실이 드러나 사용자 글이 조용히
+            # 사라졌다 → 지우기 전에 막는다.
+            blocked = _form_plan_conflict(ops)
+            if blocked:
+                messagebox.showwarning("양식은 따로 변환해주세요", blocked)
+                status_var.set("⚠ 양식은 라벨만 따로 선택해 변환해주세요")
+                return
             hwp_engine.delete_selection()
             result = engine_library.execute_library_plan(
                 ops, library.template_path, form_path_fn=library.template_path)
@@ -258,6 +288,13 @@ def _template_path_by_ref(block):
     return library.template_path(it) if it else None
 
 
+def _template_slot_count_by_ref(block):
+    r"""블럭이 가리키는 템플릿의 빈칸(\) 개수. 빈칸 청소 범위를 개수로 제한한다."""
+    it = library.get_item("템플릿", item_id=block.get("ref"),
+                          name=block.get("template"))
+    return int(it.get("slot_count") or 0) if it else None
+
+
 def _form_path_by_ref(block):
     """블럭/항목이 가리키는 양식 파일 경로."""
     it = library.get_item("양식", item_id=block.get("ref") or block.get("id"),
@@ -271,7 +308,8 @@ def run_palette_block(block):
     try:
         ok, msg = engine_library.run_block(
             block, template_path_fn=_template_path_by_ref,
-            form_path_fn=_form_path_by_ref)
+            form_path_fn=_form_path_by_ref,
+            slot_count_fn=_template_slot_count_by_ref)
         if not ok:
             applog.warn(f"팔레트 블럭 실행 거부: {msg}")
         status_var.set(("✅ " if ok else "⚠ ") + msg)
@@ -551,6 +589,8 @@ def _add_tooltip(widget, text):
     widget.bind("<Enter>", show, add="+")
     widget.bind("<Leave>", hide, add="+")
     widget.bind("<ButtonPress-1>", hide, add="+")   # 눌렀으면 말풍선은 치운다
+    # 탭 전환으로 버튼이 destroy 될 때 <Leave> 가 안 와도 말풍선은 남지 않는다 —
+    # Toplevel 을 버튼의 자식으로 만들었기 때문에 Tk 가 함께 정리한다(실측 확인).
 
 
 def _make_block_button(parent, blk):

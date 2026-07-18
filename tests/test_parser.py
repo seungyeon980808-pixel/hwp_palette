@@ -251,6 +251,27 @@ class StyleSpanTest(unittest.TestCase):
         self.assertFalse(md_parser.has_style_spans("\\인사말\\"))
         self.assertFalse(md_parser.has_style_spans(""))
 
+    def test_앞의_문자라벨이_서식구간을_삼키지_않는다(self):
+        """정규식 하나로 훑으면 맨 앞 \\인사말\\ 을 여는 표시로 잡아
+        ' \\굵게\\포인트' 를 내용으로 먹어버렸다 — 굵게가 통째로 사라지던 버그."""
+        ops, _ = self._rich("\\인사말\\ \\굵게\\포인트\\/ 감사합니다")
+        self.assertEqual(ops[0][0], "rich_line")
+        segs = ops[0][1]
+        self.assertEqual([s["text"] for s in segs],
+                         ["안녕하세요 ", "포인트", " 감사합니다"])
+        self.assertEqual(segs[1]["style"], {"굵게": True})
+
+    def test_서식_뒤에_문자라벨이_와도_된다(self):
+        ops, _ = self._rich("\\굵게\\가\\/ 뒤 \\인사말\\ 끝")
+        segs = ops[0][1]
+        self.assertEqual([s["text"] for s in segs], ["가", " 뒤 안녕하세요 끝"])
+
+    def test_문자라벨이_서식구간_양쪽에_있어도_된다(self):
+        ops, _ = self._rich("\\인사말\\ \\굵게\\핵심\\/ \\인사말\\")
+        segs = ops[0][1]
+        self.assertEqual([s["text"] for s in segs],
+                         ["안녕하세요 ", "핵심", " 안녕하세요"])
+
 
 if __name__ == "__main__":
     unittest.main()

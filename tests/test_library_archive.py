@@ -111,6 +111,29 @@ class ArchiveRoundTripTest(unittest.TestCase):
         self.assertIn("원본내용", texts)      # 원본이 살아 있다
         self.assertEqual(len(texts), 2)
 
+    def test_건너뛴_항목이_이름을_선점하지_않는다(self):
+        r"""조각 파일이 없어 건너뛴 항목이 이름·라벨을 먼저 차지하면, 뒤따르는
+        멀쩡한 항목이 있지도 않은 충돌 때문에 이름이 바뀐다."""
+        import json
+        import zipfile
+        z = pathlib.Path(self.tmp.name) / "partial.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("library.json", json.dumps({
+                "version": library.ARCHIVE_VERSION,
+                "items": [
+                    # 조각이 zip 에 없음 → 건너뛰어야 함
+                    {"category": "템플릿", "name": "결재란", "label": "결재란",
+                     "file": "missing.hwp", "slot_count": 1},
+                    # 같은 이름·라벨이지만 이쪽은 멀쩡한 문자 항목
+                    {"category": "문자", "name": "결재란", "label": "결재란",
+                     "text": "내용"},
+                ]}, ensure_ascii=False))
+        r = library.import_archive(z)
+        self.assertEqual(r["added"], 1)
+        self.assertEqual(r["renamed"], [])         # 충돌이 없어야 한다
+        self.assertEqual(r["relabeled"], [])
+        self.assertEqual(library.list_items("문자")[0]["label"], "결재란")
+
     def test_형식_버전이_다르면_거부한다(self):
         import json
         import zipfile

@@ -421,6 +421,18 @@ def import_archive(src_path):
             item = dict(rec)
             item["id"] = uuid.uuid4().hex
 
+            # 조각 파일 확인을 **이름·라벨을 정하기 전에** 한다. 건너뛸 항목이
+            # 이름/라벨을 선점하면, 뒤따르는 멀쩡한 항목이 있지도 않은 충돌
+            # 때문에 이름이 바뀌고 "겹쳐서 바꿨다"고 잘못 보고된다.
+            arc = None
+            if cat in _FILE_CATEGORIES:
+                src_name = item.get("file")
+                arc = f"{_ARCHIVE_FRAGMENT_DIR}/{src_name}"
+                if src_name is None or arc not in zf.namelist():
+                    applog.warn("가져오기: 조각 파일이 없어 건너뜀 — "
+                                f"{item.get('name', '?')!r}")
+                    continue
+
             orig_name = item.get("name", "이름없음")
             item["name"] = _unique_name(data[cat], orig_name)
             if item["name"] != orig_name:
@@ -432,12 +444,7 @@ def import_archive(src_path):
                 relabeled.append((orig_label, item["label"]))
             taken_labels.add(item["label"])
 
-            if cat in _FILE_CATEGORIES:
-                src_name = item.get("file")
-                arc = f"{_ARCHIVE_FRAGMENT_DIR}/{src_name}"
-                if src_name is None or arc not in zf.namelist():
-                    applog.warn(f"가져오기: 조각 파일이 없어 건너뜀 — {orig_name!r}")
-                    continue
+            if arc is not None:
                 # 파일명은 새로 발급 — 보낸 쪽과 우연히 같은 이름이어도 안 덮어씀
                 fname = f"{uuid.uuid4().hex}.hwp"
                 (FRAGMENTS_DIR / fname).write_bytes(zf.read(arc))

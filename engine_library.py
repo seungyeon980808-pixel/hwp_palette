@@ -158,14 +158,23 @@ _MAX_SLOT_SCAN = 200
 
 
 def measure_insert_span(anchor_pos, insert_fn):
-    """anchor_pos에 insert_fn()으로 삽입한 내용의 '마지막 문단 번호'를 돌려준다.
+    r"""anchor_pos에 insert_fn()으로 삽입한 내용의 '마지막 문단 번호'를 돌려준다.
 
     insert_file 직후 커서가 삽입물 뒤로 이동하지 않아(실측) 끝 위치를 커서로는
     알 수 없다. 그래서 삽입 전후의 '문서 마지막 문단 번호' 차이로 삽입물이
     차지한 문단 수를 역산한다.
+
+    **커서가 표 안이면 None 을 돌려준다.** doc_end_para() 는 본문(list 0) 기준
+    번호인데 anchor_pos[1] 은 셀 안에서 다시 센 번호라, 둘을 더하면 뜻이 없는
+    수가 나온다. 그 수로 범위를 재면 빈칸이 하나도 안 채워지고 `\` 가 문서에
+    그대로 남는다. 범위를 모를 땐 개수 상한(max_delete)에 맡기는 게 맞다.
     """
-    before = hwp_engine.doc_end_para()
     hwp = _h()
+    if anchor_pos[0] != 0:
+        insert_fn()
+        hwp.SetPos(*anchor_pos)
+        return None
+    before = hwp_engine.doc_end_para()
     hwp.SetPos(*anchor_pos)
     insert_fn()
     after = hwp_engine.doc_end_para()
@@ -174,18 +183,47 @@ def measure_insert_span(anchor_pos, insert_fn):
 
 
 def _beyond(end_para):
-    """현재 커서가 삽입 범위를 벗어났는가."""
+    r"""현재 커서가 삽입 범위를 벗어났는가.
+
+    한계 (그래서 개수 상한을 함께 쓴다):
+      GetPos() 는 (list, para, pos) 인데 **para 는 list 안에서의 번호**다.
+      표 안에 들어가면 list 가 바뀌면서 para 가 셀 기준으로 다시 세어지므로
+      (본문 300번째 문단의 표 안이어도 para 가 0 일 수 있다), 본문 기준으로
+      계산한 end_para 와 곧바로 비교할 수 없다. 즉 이 검사만으로는
+      "삽입 범위 아래에 있는 사용자의 표 속 \" 를 걸러내지 못한다.
+      → strip_slot_markers/fill_slots 의 max_delete(빈칸 개수 상한)가 그 구멍을 막는다.
+    """
     if end_para is None:
         return False
     try:
-        return _h().GetPos()[1] > end_para
+        list_id, para, _ = _h().GetPos()
     except Exception as e:
         # 위치를 모르면 '벗어났다'고 본다 — 남의 문서를 지우느니 빈칸을 남긴다
         applog.exc("빈칸 범위 확인 실패 — 안전하게 청소 중단", e)
         return True
+    if list_id != 0:
+        return False        # 표/각주 등 — para 비교가 무의미. 개수 상한에 맡긴다
+    return para > end_para
 
 
-def strip_slot_markers(anchor_pos, end_para=None):
+def _before_anchor(anchor_pos):
+    r"""커서가 삽입 지점보다 **앞**에 있는가 (되돌아간 것으로 본다).
+
+    find_text 는 RepeatFind 인데, 문서 끝에 닿았을 때 맨 앞으로 되돌아가
+    다시 찾는지 확인하지 못했다. 만약 되돌아간다면 앞쪽에 있는 사용자의 `\`
+    가 '범위 안'으로 보여(문단 번호가 end_para 보다 작으므로) 지워져 버린다.
+    삽입 지점보다 앞은 무슨 일이 있어도 우리 것이 아니므로 여기서 멈춘다.
+    """
+    try:
+        list_id, para, pos = _h().GetPos()
+    except Exception:
+        return True         # 모르면 멈춘다
+    if list_id != anchor_pos[0]:
+        return False        # 다른 리스트 — 앞뒤를 따질 수 없다
+    return (para, pos) < (anchor_pos[1], anchor_pos[2])
+
+
+def strip_slot_markers(anchor_pos, end_para=None, max_delete=None):
     r"""anchor_pos부터 end_para 문단까지 남은 빈칸 표시(\)를 제거한다.
 
     빈칸 표시는 '여기에 내용이 들어간다'는 안내일 뿐이라, 채워지지 않고 남으면
@@ -197,19 +235,25 @@ def strip_slot_markers(anchor_pos, end_para=None):
       보기 전에는 알 수 없는 훼손이라 위험도가 높았다.
       end_para=None 은 '문서 전체가 대상'인 경우(양식을 새 문서로 연 직후)에만
       의도적으로 쓴다.
+
+    max_delete: 지울 빈칸 개수 상한. 템플릿이 선언한 빈칸 수를 넘겨 받는다.
+      end_para 만으로는 표 안을 걸러내지 못하기 때문에(_beyond 설명 참고)
+      반드시 함께 써야 한다 — "이 템플릿엔 빈칸이 3개다"가 가장 확실한 경계다.
+      None 이면 개수 제한 없음(양식 전체 청소).
     """
     hwp = _h()
     act = hwp.HAction
     hwp.SetPos(*anchor_pos)
-    for _ in range(_MAX_SLOT_SCAN):
+    limit = _MAX_SLOT_SCAN if max_delete is None else min(max_delete, _MAX_SLOT_SCAN)
+    for _ in range(limit):
         if not find_text("\\"):
             break
-        if _beyond(end_para):
+        if _before_anchor(anchor_pos) or _beyond(end_para):
             break                   # 삽입 범위 밖 — 사용자가 쓴 \ 이므로 건드리지 않는다
         act.Run("Delete")
 
 
-def fill_slots(anchor, fills, end_para=None):
+def fill_slots(anchor, fills, end_para=None, slot_count=None):
     r"""anchor 이후의 빈칸(\)을 fills 로 위에서부터 채우고, 남은 건 청소.
 
     반환: 실제로 채운 개수.
@@ -221,18 +265,23 @@ def fill_slots(anchor, fills, end_para=None):
     hwp = _h()
     act = hwp.HAction
     filled = 0
+    used = 0
     hwp.SetPos(*anchor)
     for value in fills:
         if not find_text("\\"):
             break
-        if _beyond(end_para):
+        if _before_anchor(anchor) or _beyond(end_para):
             break
+        used += 1
         if value is None:
             act.Run("Delete")               # '-' → 그 빈칸은 비움
         else:
             insert_plain(value)
             filled += 1
-    strip_slot_markers(anchor, end_para)     # 안 채운 빈칸 표시 제거
+    # 남은 빈칸만 청소한다. slot_count 를 알면 "이 템플릿에 남은 개수"가 정확한
+    # 상한이 된다 — 그만큼만 지우므로 아래쪽 사용자 문서는 절대 안 건드린다.
+    remaining = None if slot_count is None else max(int(slot_count) - used, 0)
+    strip_slot_markers(anchor, end_para, max_delete=remaining)
     return filled
 
 
@@ -374,11 +423,14 @@ def execute_function_block(actions):
 
 
 # ── 팔레트: 블럭 실행 ──────────────────────────────────
-def run_block(block, template_path_fn=None, form_path_fn=None):
-    """팔레트 블럭 하나를 실행한다. 종류에 따라 삽입/적용 분기.
+def run_block(block, template_path_fn=None, form_path_fn=None,
+              slot_count_fn=None):
+    r"""팔레트 블럭 하나를 실행한다. 종류에 따라 삽입/적용 분기.
 
     template_path_fn: 블럭 → 템플릿 조각 경로 (커서 위치에 삽입)
     form_path_fn:     블럭 → 양식 파일 경로 (새 문서로 열기)
+    slot_count_fn:    블럭 → 그 템플릿의 빈칸(\) 개수. 빈칸 청소 범위를 개수로
+                      제한하는 데 쓴다(없으면 문단 범위로만 제한).
     반환: (성공여부, 상태메시지)
     """
     btype = block.get("type")
@@ -398,9 +450,11 @@ def run_block(block, template_path_fn=None, form_path_fn=None):
             return False, (f"템플릿을 찾을 수 없습니다: {block.get('template', '?')}"
                            " (라이브러리에서 삭제된 것 같습니다)")
         anchor = _h().GetPos()
-        # 팔레트로 넣을 땐 채울 내용이 없으므로, 삽입한 범위 안의 빈칸만 청소한다
+        # 팔레트로 넣을 땐 채울 내용이 없으므로, 삽입한 범위 안의 빈칸만 청소한다.
+        # slot_count 를 알면 그 개수만큼만 지운다 (모르면 문단 범위로만 제한).
         end_para = measure_insert_span(anchor, lambda: insert_fragment(path))
-        strip_slot_markers(anchor, end_para)
+        strip_slot_markers(anchor, end_para,
+                           max_delete=slot_count_fn(block) if slot_count_fn else None)
         return True, "템플릿 삽입"
     if btype == "form":
         if form_path_fn is None:
@@ -466,10 +520,23 @@ def insert_rich_line(segments):
     이어 쓰기 전에 **반드시 끝 위치로 되돌려 놓는다** — 안 그러면 두 번째
     구간부터 글자가 앞에 끼어 들어간다.
 
+    **감싸지 않은 구간에도 서식을 적용한다** — 줄 시작 시점의 서식을 미리
+    떠 두었다가 그대로 되입힌다. 한글은 새로 넣는 글자에 '앞 글자의 서식'을
+    물려주기 때문에, 그냥 두면 `\굵게\중요\/ 나머지` 에서 '나머지'까지 굵게
+    나온다. 물려받은 서식을 매번 원래대로 되돌려야 감싼 부분만 굵어진다.
+
     서식 적용에 실패해도 글자는 이미 들어가 있다. 그 경우 서식만 포기하고
     계속 진행한다 — 변환 전체를 되돌리는 것보다 낫다.
     """
     hwp = _h()
+    # 줄 시작 시점의 서식 = 감싸지 않은 구간이 유지해야 할 모습
+    base = None
+    if any(s.get("style") for s in segments):
+        try:
+            base = capture_charshape(CHARSHAPE_FIELD_LABELS)
+        except Exception as e:
+            applog.exc("서식 감싸기: 원래 서식을 못 읽음 — 감싼 뒤 서식이 번질 수 있음", e)
+
     for seg in segments:
         text = seg.get("text") or ""
         if not text:
@@ -477,7 +544,7 @@ def insert_rich_line(segments):
         start = hwp.GetPos()
         insert_plain(text)
         end = hwp.GetPos()
-        delta = seg.get("style")
+        delta = seg.get("style") or base
         if not delta:
             continue
         try:
@@ -521,7 +588,8 @@ def execute_library_plan(ops, template_path_fn, form_path_fn=None):
         hwp.MoveDocBegin()
         # 새로 연 양식 문서 전체가 대상이므로 여기서는 범위 제한을 두지 않는다
         # (사용자가 쓴 다른 내용이 섞여 있을 수 없는, 유일하게 안전한 경우)
-        filled = fill_slots(hwp.GetPos(), fills, end_para=None)
+        filled = fill_slots(hwp.GetPos(), fills, end_para=None,
+                            slot_count=item.get("slot_count"))
         return {"templates": 0, "slots_filled": filled, "forms": 1}
 
     marker_base = "◈LIB%d_" % (int(time.time() * 1000) % 10**9)
@@ -554,5 +622,6 @@ def execute_library_plan(ops, template_path_fn, form_path_fn=None):
         anchor = hwp.GetPos()
         path = template_path_fn(item)
         end_para = measure_insert_span(anchor, lambda p=path: insert_fragment(p))
-        filled += fill_slots(anchor, fills, end_para)
+        filled += fill_slots(anchor, fills, end_para,
+                             slot_count=item.get("slot_count"))
     return {"templates": len(templates), "slots_filled": filled, "forms": 0}

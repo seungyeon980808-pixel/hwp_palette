@@ -147,11 +147,48 @@ SKIP_MARK = '-'      # 이 줄은 해당 빈칸을 비워둔다
 # `\/` 는 그 어느 쪽과도 겹치지 않아, 기존 문서를 다시 해석하게 만들지 않는다.
 # 내용 안에 다시 감싸기를 넣는 것(중첩)은 지원하지 않는다 — 비단조롭게 복잡해지고
 # 실제로 쓸 일이 거의 없다.
-STYLE_SPAN_RE = re.compile(r'\\([^\\\r\n]+?)\\(.*?)\\/')
+STYLE_CLOSE = '\\/'
 
 
-def has_style_spans(text):
-    return bool(STYLE_SPAN_RE.search(text or ''))
+def _find_style_spans(line, lookup):
+    r"""줄에서 서식 감싸기 구간을 찾는다. [(시작, 내용시작, 내용끝, 항목), ...]
+
+    정규식 하나로 `\\라벨\\(.*?)\\/` 를 훑으면 안 된다 (실측 실패 사례):
+      `\인사말\ \굵게\포인트\/`
+    에서 정규식은 **맨 앞 `\인사말\` 을 여는 표시로 잡고** 내용을
+    ` \굵게\포인트` 로 먹어버린다. 그러면 진짜 서식 구간이 사라져서, 굵게는
+    안 먹고 `\굵게\...\/` 가 문서에 그대로 남는다. 문자 라벨과 서식 감싸기를
+    한 줄에 쓰는 아주 흔한 경우가 통째로 깨진다.
+
+    그래서 **라벨을 하나씩 보며 '서식' 분류일 때만** 여는 표시로 인정하고,
+    거기서부터 닫는 표시를 찾는다. 서식이 아닌 라벨은 그냥 지나친다.
+    """
+    spans = []
+    i = 0
+    while True:
+        m = LIB_TOKEN_RE.search(line, i)
+        if not m:
+            return spans
+        entry = lookup.get(m.group(1).strip())
+        if entry and entry[0] == '서식':
+            close = line.find(STYLE_CLOSE, m.end())
+            if close != -1:
+                spans.append((m.start(), m.end(), close, entry[1]))
+                i = close + len(STYLE_CLOSE)
+                continue
+        i = m.end()
+
+
+def has_style_spans(text, lookup=None):
+    r"""서식 감싸기가 들어 있는가.
+
+    lookup 을 주면 '서식' 라벨인지까지 확인한다. 없으면 모양만 본다
+    (`\...\...\/` 꼴이 있는지).
+    """
+    text = text or ''
+    if lookup is not None:
+        return bool(_find_style_spans(text, lookup))
+    return bool(re.search(r'\\[^\\\r\n]+?\\.*?' + re.escape(STYLE_CLOSE), text))
 
 
 def build_segments(line, lookup, warnings):
@@ -163,23 +200,20 @@ def build_segments(line, lookup, warnings):
     라벨이 '서식' 분류가 아니면 감싸기로 보지 않고 원문 그대로 둔다 — 문자
     라벨 뒤에 우연히 `\\/` 가 오는 경우까지 서식으로 오해하면 안 되기 때문.
     """
-    spans = []
-    for m in STYLE_SPAN_RE.finditer(line):
-        entry = lookup.get(m.group(1).strip())
-        if entry and entry[0] == '서식':
-            spans.append((m, entry[1]))
+    spans = _find_style_spans(line, lookup)
     if not spans:
         return None
 
     segs, last = [], 0
-    for m, item in spans:
-        if m.start() > last:
-            segs.append({"text": _replace_char_tokens(line[last:m.start()],
+    for start, body_start, body_end, item in spans:
+        if start > last:
+            segs.append({"text": _replace_char_tokens(line[last:start],
                                                       lookup, warnings),
                          "style": None})
-        segs.append({"text": _replace_char_tokens(m.group(2), lookup, warnings),
+        segs.append({"text": _replace_char_tokens(line[body_start:body_end],
+                                                  lookup, warnings),
                      "style": item.get("fields") or {}})
-        last = m.end()
+        last = body_end + len(STYLE_CLOSE)
     if last < len(line):
         segs.append({"text": _replace_char_tokens(line[last:], lookup, warnings),
                      "style": None})
