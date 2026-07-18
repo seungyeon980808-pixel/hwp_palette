@@ -48,8 +48,10 @@ import time
 import tkinter as tk
 from tkinter import messagebox, filedialog
 
+import applog
 import parser as md_parser
 import hwp_engine
+import engine_library
 import exam_engine
 import settings
 import settings_ui
@@ -96,8 +98,25 @@ def ensure_hwp():
         hwp_engine.connect()
         return True
     except Exception as e:
+        applog.exc("한글 연결 실패", e)
         messagebox.showerror("연결 실패", f"한글을 먼저 실행해주세요.\n{e}")
         return False
+
+
+def report_error(what, error, detail=False):
+    """실패를 세 곳에 동시에 남긴다 (개선안 12).
+
+    창을 닫으면 사라지는 메시지박스만으로는 "왜 안 됐지"가 남지 않았다.
+      · app.log  — 나중에 원인을 찾기 위한 기록
+      · 메시지박스 — 지금 당장 알아야 하니까
+      · 상태표시줄 — 메시지박스를 닫은 뒤에도 남아 있게
+    """
+    applog.exc(what, error, detail=detail)
+    messagebox.showerror(what, f"{type(error).__name__}: {error}")
+    try:
+        status_var.set(f"⚠ {what}")
+    except Exception:
+        pass        # UI가 아직 안 만들어진 시점 — 로그는 이미 남았다
 
 
 def read_selected_text():
@@ -113,7 +132,7 @@ def fn_new():
         hwp_engine.new_document()
         status_var.set("✅ 새 문서")
     except Exception as e:
-        messagebox.showerror("오류", str(e))
+        report_error("새 문서 만들기 실패", e)
 
 
 def fn_open():
@@ -126,7 +145,7 @@ def fn_open():
             hwp_engine.open_document(path)
             status_var.set(f"✅ {pathlib.Path(path).name}")
         except Exception as e:
-            messagebox.showerror("오류", str(e))
+            report_error(f"파일 열기 실패: {pathlib.Path(path).name}", e)
 
 
 def fn_save():
@@ -135,7 +154,7 @@ def fn_save():
         hwp_engine.save_document()
         status_var.set("✅ 저장 완료")
     except Exception as e:
-        messagebox.showerror("오류", str(e))
+        report_error("저장 실패", e)
 
 
 def fn_convert():
@@ -165,11 +184,13 @@ def fn_convert():
             lookup = library.label_lookup()
             ops, warns = md_parser.build_library_plan(selected, lookup)
             hwp_engine.delete_selection()
-            result = hwp_engine.execute_library_plan(
+            result = engine_library.execute_library_plan(
                 ops, library.template_path, form_path_fn=library.template_path)
             hwp_engine._diag("fn_convert: execute_library_plan 후")
             if result.get("error"):
+                applog.warn(f"라이브러리 변환 실패: {result['error']}")
                 messagebox.showerror("변환 실패", result["error"])
+                status_var.set(f"⚠ {result['error']}")
                 return
             if result.get("forms"):
                 msg = f"✅ 양식 열기 완료 (빈칸 {result['slots_filled']}개 채움)"
@@ -184,8 +205,10 @@ def fn_convert():
             "마크다운 형식을 인식하지 못했어요.\n"
             "시험문제: '발문:', '자료:', '질문:', '보기:', '선지:'\n"
             "라이브러리: \\라벨\\ (등록한 라벨)")
+        status_var.set("⚠ 마크다운 형식을 인식하지 못했습니다")
     except Exception as e:
-        messagebox.showerror("오류", f"{type(e).__name__}: {e}")
+        # detail=True — 변환은 단계가 많아 스택 없이는 원인 지점을 못 찾는다
+        report_error("마크다운 변환 실패", e, detail=True)
 
 
 def fn_reset_format():
@@ -202,10 +225,10 @@ def fn_reset_format():
                 "선택 내용을 읽지 못했어요. 영역을 다시 드래그한 뒤 시도해주세요.")
             return
         cleaned = md_parser.strip_circled_markers(selected)
-        hwp_engine.apply_default_format(palette.get_default_format(), text=cleaned)
+        engine_library.apply_default_format(palette.get_default_format(), text=cleaned)
         status_var.set("✅ 기본 서식으로 변환")
     except Exception as e:
-        messagebox.showerror("오류", f"{type(e).__name__}: {e}")
+        report_error("기본 서식 변환 실패", e)
 
 
 def fn_open_palette_settings():
@@ -225,7 +248,7 @@ def fn_pick_photo():
         hwp_engine.insert_picture_to_cell(path)
         status_var.set(f"✅ 사진 삽입: {pathlib.Path(path).name}")
     except Exception as e:
-        messagebox.showerror("오류", f"{type(e).__name__}: {e}")
+        report_error(f"사진 삽입 실패: {pathlib.Path(path).name}", e)
 
 
 def _template_path_by_ref(block):
@@ -246,12 +269,14 @@ def run_palette_block(block):
     """팔레트 블럭 클릭 — 종류에 따라 삽입/적용."""
     if not ensure_hwp(): return
     try:
-        ok, msg = hwp_engine.run_block(
+        ok, msg = engine_library.run_block(
             block, template_path_fn=_template_path_by_ref,
             form_path_fn=_form_path_by_ref)
+        if not ok:
+            applog.warn(f"팔레트 블럭 실행 거부: {msg}")
         status_var.set(("✅ " if ok else "⚠ ") + msg)
     except Exception as e:
-        status_var.set(f"오류: {type(e).__name__}: {e}")
+        report_error("팔레트 블럭 실행 실패", e, detail=True)
 
 
 # ── UI (Apple 스타일 밝은 톤) ──────────────────
@@ -470,23 +495,72 @@ def render_palette():
             c = 0
 
 
-_BLOCK_COLOR = {"char": CARD, "template": "#eef4ff", "function": "#fff4e6"}
+# 블럭 종류별 배경색·기호 — 환경설정 미리보기(palette_ui._make_tile/_tile_text)와
+# 반드시 같아야 한다. 'form'이 여기에만 빠져 있어서, 양식 블럭이 환경설정에서는
+# 📄+연녹색인데 메인 팔레트에서는 ƒ+흰 배경으로 보였다.
+_BLOCK_COLOR = {"char": CARD, "template": "#eef4ff",
+                "function": "#fff4e6", "form": "#eafaf1"}
+_BLOCK_PREFIX = {"template": "▦ ", "function": "ƒ ", "form": "📄 "}
+_BLOCK_LABEL_MAX = 14
+
+
+def _block_label(blk):
+    """블럭에 표시할 이름. 템플릿·양식은 라이브러리의 '현재' 이름을 따라간다."""
+    btype = blk.get("type")
+    if btype == "char":
+        return blk.get("value", "")
+    if btype in ("template", "form"):
+        cat = "양식" if btype == "form" else "템플릿"
+        key = "form" if btype == "form" else "template"
+        it = library.get_item(cat, item_id=blk.get("ref"), name=blk.get(key))
+        return it["name"] if it else f"{blk.get(key, '?')} (삭제됨)"
+    return blk.get("name", "")
+
+
+def _add_tooltip(widget, text):
+    """마우스를 올리면 전체 이름을 말풍선으로 보여준다 (개선안 15).
+
+    블럭 이름은 칸 폭 때문에 잘릴 수밖에 없는데, 잘린 채로는 비슷한 이름을
+    구별할 수 없었다. 잘렸을 때만 붙인다.
+    """
+    tip = {"win": None}
+
+    def show(_event=None):
+        if tip["win"] is not None:
+            return
+        win = tk.Toplevel(widget)
+        win.wm_overrideredirect(True)       # 제목표시줄 없는 말풍선
+        win.wm_geometry(f"+{widget.winfo_rootx() + 10}"
+                        f"+{widget.winfo_rooty() + widget.winfo_height() + 4}")
+        # 메인 창이 topmost라 말풍선도 올려주지 않으면 뒤로 숨는다
+        win.attributes("-topmost", True)
+        tk.Label(win, text=text, font=(FONT, 8), fg=TEXT, bg="#ffffe0",
+                 bd=1, relief="solid", padx=6, pady=3).pack()
+        tip["win"] = win
+
+    def hide(_event=None):
+        if tip["win"] is not None:
+            tip["win"].destroy()
+            tip["win"] = None
+
+    widget.bind("<Enter>", show, add="+")
+    widget.bind("<Leave>", hide, add="+")
+    widget.bind("<ButtonPress-1>", hide, add="+")   # 눌렀으면 말풍선은 치운다
 
 
 def _make_block_button(parent, blk):
-    if blk["type"] == "char":
-        label = blk.get("value", "")
-    elif blk["type"] == "template":
-        label = "▦ " + blk.get("template", "")
-    else:
-        label = "ƒ " + blk.get("name", "")
-    if len(label) > 14:
-        label = label[:14] + "…"
-    return tk.Button(parent, text=label,
-                     command=lambda b=blk: run_palette_block(b),
-                     font=(FONT, 10), fg=TEXT, bg=_BLOCK_COLOR.get(blk["type"], CARD),
-                     activebackground=BORDER, bd=1, relief="solid", pady=6,
-                     cursor="hand2")
+    full = _BLOCK_PREFIX.get(blk.get("type"), "") + _block_label(blk)
+    label = (full if len(full) <= _BLOCK_LABEL_MAX
+             else full[:_BLOCK_LABEL_MAX] + "…")
+    btn = tk.Button(parent, text=label,
+                    command=lambda b=blk: run_palette_block(b),
+                    font=(FONT, 10), fg=TEXT,
+                    bg=_BLOCK_COLOR.get(blk.get("type"), CARD),
+                    activebackground=BORDER, bd=1, relief="solid", pady=6,
+                    cursor="hand2")
+    if label != full:
+        _add_tooltip(btn, full)
+    return btn
 
 
 render_palette()

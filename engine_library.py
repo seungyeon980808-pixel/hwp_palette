@@ -1,0 +1,521 @@
+# -*- coding: utf-8 -*-
+r"""라이브러리·팔레트 실행 엔진 — 캡처/적용, 블럭 실행, \라벨\ 변환.
+
+hwp_engine(코어)이 '한글을 어떻게 조작하는가'를 맡는다면, 이 모듈은
+'등록해 둔 것을 어떻게 꺼내 쓰는가'를 맡는다 (개선안 19 — 2026-07-18 분할).
+
+  · 서식(부분 델타) 캡처/적용
+  · 템플릿(조각 .hwp) 캡처/삽입, 양식(파일 통째) 열기
+  · 팔레트 블럭 실행 (문자/기능/템플릿/양식)
+  · 마크다운 \라벨\ 변환 계획 실행
+
+한글 조작은 전부 hwp_engine 의 것을 그대로 쓴다(연결 인스턴스를 공유하기 위함).
+"""
+
+import applog
+import hwp_engine
+from hwp_engine import (
+    delete_selection, find_text, has_selection, insert_plain,
+)
+
+
+def _h():
+    """현재 연결된 한글 인스턴스. 재연결로 바뀌므로 매번 모듈에서 읽는다."""
+    return hwp_engine.hwp
+
+
+# ── 라이브러리: 서식(부분 델타) 캡처/적용 ───────────────
+# 친화적 이름 : CharShape 딕셔너리 키. 값 단위는 저장소(library.py)에도 그대로
+# 노출되므로, 여기 바뀌면 저장된 항목의 의미도 바뀐다는 점 주의.
+CHARSHAPE_FIELD_LABELS = ["굵게", "기울임", "밑줄", "글자색", "자간", "글꼴", "크기"]
+
+
+def _charshape_get(cs, label):
+    if label == "굵게":
+        return bool(cs.get("Bold"))
+    if label == "기울임":
+        return bool(cs.get("Italic"))
+    if label == "밑줄":
+        return int(cs.get("UnderlineType") or 0) != 0
+    if label == "글자색":
+        return cs.get("TextColor")
+    if label == "자간":
+        return cs.get("SpacingHangul")
+    if label == "글꼴":
+        return cs.get("FaceNameHangul")
+    if label == "크기":
+        h = cs.get("Height") or 0
+        return round(h / 100, 1)
+    return None
+
+
+def capture_charshape(selected_labels):
+    """현재 커서/선택 위치의 글자 서식에서, 체크된 항목만 델타로 캡처한다."""
+    hwp = _h()
+    act = hwp.HAction
+    ps = hwp.HParameterSet
+    act.GetDefault("CharShape", ps.HCharShape.HSet)
+    cs = hwp.get_charshape_as_dict()
+    delta = {}
+    for label in selected_labels:
+        v = _charshape_get(cs, label)
+        if v is not None:
+            delta[label] = v
+    return delta
+
+
+def apply_charshape_delta(delta):
+    """델타에 있는 항목만 현재 선택/커서 위치에 적용한다(그 외 서식은 그대로 유지).
+
+    GetDefault로 대상의 '현재' 서식을 먼저 불러온 뒤, 델타에 있는 필드만
+    덮어써서 Execute 한다 — 이 방식이라야 부분 적용(굵기만 바꾸고 글꼴은
+    유지 등)이 보장된다.
+    """
+    hwp = _h()
+    act = hwp.HAction
+    ps = hwp.HParameterSet
+    act.GetDefault("CharShape", ps.HCharShape.HSet)
+    if "굵게" in delta:
+        ps.HCharShape.Bold = 1 if delta["굵게"] else 0
+    if "기울임" in delta:
+        ps.HCharShape.Italic = 1 if delta["기울임"] else 0
+    if "밑줄" in delta:
+        ps.HCharShape.UnderlineType = 1 if delta["밑줄"] else 0
+    if "글자색" in delta:
+        ps.HCharShape.TextColor = delta["글자색"]
+    if "자간" in delta:
+        ps.HCharShape.SpacingHangul = delta["자간"]
+        ps.HCharShape.SpacingLatin = delta["자간"]
+    if "글꼴" in delta:
+        ps.HCharShape.FaceNameHangul = delta["글꼴"]
+        ps.HCharShape.FaceNameLatin = delta["글꼴"]
+    if "크기" in delta:
+        ps.HCharShape.Height = hwp.PointToHwpUnit(delta["크기"])
+    act.Execute("CharShape", ps.HCharShape.HSet)
+
+
+# ── 라이브러리: 템플릿(통째 캡처) ───────────────────────
+def auto_select_table_if_inside():
+    """커서가 표 안이면(선택 없이 클릭만 한 상태) 표 전체를 선택한다.
+
+    탈출(Cancel+CloseEx)로 본문의 표 앵커 앞에 도달한 뒤 MoveSelRight로
+    앵커(글자 취급되는 표 1개)를 선택 — 실측 2026-07-15, 병합 표 재생 확인.
+    반환: 선택 성공 여부.
+    """
+    hwp = _h()
+    act = hwp.HAction
+    try:
+        if hwp.GetPos()[0] == 0:
+            return False        # 본문에 있음 — 표 안이 아님
+    except Exception as e:
+        applog.exc("표 안 여부 확인 실패", e)
+        return False
+    act.Run("Cancel")
+    for _ in range(hwp_engine._MAX_NEST_DEPTH):
+        try:
+            if hwp.GetPos()[0] == 0:
+                break
+        except Exception as e:
+            applog.exc("표 탈출 중 위치 조회 실패", e)
+            return False
+        act.Run("CloseEx")
+    act.Run("MoveSelRight")
+    return has_selection()
+
+
+def capture_fragment(dest_path):
+    """현재 선택 영역을 통째로 조각 .hwp 파일로 저장한다(병합·서식 그대로)."""
+    _h().save_block_as(str(dest_path))
+
+
+def insert_fragment(path):
+    r"""조각 .hwp 파일을 커서 위치에 그대로 삽입한다.
+
+    keep_section=0 필수 — 조각에는 저장 당시의 구역(secd) 정의가 같이 담기는데,
+    이를 유지(1)하면 구역 나눔이 일어나 표가 '다음 페이지'에 생성된다(실측 2026-07-15).
+
+    나머지 keep_* 는 pyhwpx 기본값이 전부 1이라 지금까지 암묵적으로 1이었다
+    (2026-07-18 pyhwpx 소스 확인 — 개선안 6). 무엇이 딸려오는지 코드에 드러나도록
+    명시해 둔다. 값 자체는 바꾸지 않았다:
+      keep_charshape / keep_parashape = 1
+        조각의 글자·문단 서식 유지. 표가 원본대로 재현되려면 반드시 1이어야 한다.
+      keep_style = 1
+        조각에 딸린 '스타일 정의'까지 대상 문서로 들여온다. 같은 이름의 스타일이
+        대상 문서에 있으면 덮어쓸 여지가 있다. 0으로 바꾸면 그 부작용은 사라지지만
+        조각 모양이 달라질 수 있어, 실제 피해 사례가 관측되기 전까지는 유지한다.
+    """
+    hwp_engine._diag("insert_fragment: insert_file 직전")
+    _h().insert_file(str(path), keep_section=0, keep_charshape=1,
+                     keep_parashape=1, keep_style=1)
+    hwp_engine._diag("insert_fragment: insert_file 직후  <<< 여기서 바뀌면 insert_file 범인")
+
+
+# ── 빈칸(\) 처리 ──────────────────────────────────────
+# 한 번의 청소에서 훑을 빈칸 개수 상한 — 무한 루프 방지용 안전장치
+_MAX_SLOT_SCAN = 200
+
+
+def measure_insert_span(anchor_pos, insert_fn):
+    """anchor_pos에 insert_fn()으로 삽입한 내용의 '마지막 문단 번호'를 돌려준다.
+
+    insert_file 직후 커서가 삽입물 뒤로 이동하지 않아(실측) 끝 위치를 커서로는
+    알 수 없다. 그래서 삽입 전후의 '문서 마지막 문단 번호' 차이로 삽입물이
+    차지한 문단 수를 역산한다.
+    """
+    before = hwp_engine.doc_end_para()
+    hwp = _h()
+    hwp.SetPos(*anchor_pos)
+    insert_fn()
+    after = hwp_engine.doc_end_para()
+    hwp.SetPos(*anchor_pos)
+    return anchor_pos[1] + max(after - before, 0)
+
+
+def _beyond(end_para):
+    """현재 커서가 삽입 범위를 벗어났는가."""
+    if end_para is None:
+        return False
+    try:
+        return _h().GetPos()[1] > end_para
+    except Exception as e:
+        # 위치를 모르면 '벗어났다'고 본다 — 남의 문서를 지우느니 빈칸을 남긴다
+        applog.exc("빈칸 범위 확인 실패 — 안전하게 청소 중단", e)
+        return True
+
+
+def strip_slot_markers(anchor_pos, end_para=None):
+    r"""anchor_pos부터 end_para 문단까지 남은 빈칸 표시(\)를 제거한다.
+
+    빈칸 표시는 '여기에 내용이 들어간다'는 안내일 뿐이라, 채워지지 않고 남으면
+    출력물에 그대로 보인다 → 삽입/변환 후 이 함수로 청소한다.
+
+    end_para 를 반드시 넘겨야 하는 이유 (개선안 5):
+      예전에는 anchor 부터 **문서 끝까지** 무조건 지웠다. 그래서 삽입한 템플릿
+      아래에 사용자가 직접 써 둔 \ 까지 같이 사라졌다. 조용히 일어나고 인쇄물을
+      보기 전에는 알 수 없는 훼손이라 위험도가 높았다.
+      end_para=None 은 '문서 전체가 대상'인 경우(양식을 새 문서로 연 직후)에만
+      의도적으로 쓴다.
+    """
+    hwp = _h()
+    act = hwp.HAction
+    hwp.SetPos(*anchor_pos)
+    for _ in range(_MAX_SLOT_SCAN):
+        if not find_text("\\"):
+            break
+        if _beyond(end_para):
+            break                   # 삽입 범위 밖 — 사용자가 쓴 \ 이므로 건드리지 않는다
+        act.Run("Delete")
+
+
+def fill_slots(anchor, fills, end_para=None):
+    r"""anchor 이후의 빈칸(\)을 fills 로 위에서부터 채우고, 남은 건 청소.
+
+    반환: 실제로 채운 개수.
+
+    end_para 는 삽입 직후 기준의 범위다. 채워 넣는 값이 문단을 늘리지는 않지만
+    (한 줄짜리 텍스트만 들어온다), 혹시 어긋나더라도 실패 방향은 '빈칸이 남는다'
+    쪽이지 '남의 글자를 지운다' 쪽이 아니다.
+    """
+    hwp = _h()
+    act = hwp.HAction
+    filled = 0
+    hwp.SetPos(*anchor)
+    for value in fills:
+        if not find_text("\\"):
+            break
+        if _beyond(end_para):
+            break
+        if value is None:
+            act.Run("Delete")               # '-' → 그 빈칸은 비움
+        else:
+            insert_plain(value)
+            filled += 1
+    strip_slot_markers(anchor, end_para)     # 안 채운 빈칸 표시 제거
+    return filled
+
+
+def count_slots_in_file(path):
+    r"""hwp 파일 안의 빈칸(\) 개수를 센다 (양식 등록 시 안내용).
+
+    현재 열려 있는 문서를 건드리지 않으려고 별도 창에서 열었다 닫는다.
+    """
+    hwp = _h()
+    saved = hwp.XHwpDocuments.Count
+    try:
+        hwp.XHwpDocuments.Add(1)          # 1 = 새 탭으로 열기
+        hwp.open(str(path))
+        text = hwp.GetTextFile("TEXT", "") or ""
+        return text.count("\\")
+    finally:
+        try:
+            if hwp.XHwpDocuments.Count > saved:
+                hwp.XHwpDocuments.Active_XHwpDocument.Close(isDirty=False)
+        except Exception as e:
+            applog.exc("빈칸 세기용 임시 문서 닫기 실패 — 창이 남아 있을 수 있음", e)
+
+
+def open_form(path):
+    r"""양식 파일을 새 문서로 연다 (용지·여백·머리말까지 원본 그대로).
+
+    템플릿(insert_fragment)은 문서 '일부'를 커서 위치에 꽂는 것이라 페이지 설정이
+    안 따라온다. 표지·통신문처럼 "이 양식으로 새로 시작"하려면 파일 전체를 열어야
+    한다. 실측(2026-07-16): 여백 45/40 보존, 창 최대화도 유지됨.
+    """
+    hwp = _h()
+    hwp.FileNew()
+    hwp.open(str(path))
+
+
+# ── 팔레트: 기능 블럭 실행 (여러 기능 병렬) ─────────────
+_TOGGLE_ACTION = {
+    "굵게": "CharShapeBold",
+    "기울임": "CharShapeItalic",
+    "밑줄": "CharShapeUnderline",
+}
+_PARA_ACTION = {
+    "가운데정렬": "ParagraphShapeAlignCenter",
+    "왼쪽정렬": "ParagraphShapeAlignLeft",
+    "양쪽정렬": "ParagraphShapeAlignJustify",
+}
+
+
+def execute_function_block(actions):
+    """기능 블럭 실행 — actions: [{"func":이름, "value":값}, ...] 를 병렬 적용.
+
+    값 있는 글자서식(글씨체·크기·자간·색)은 한 번의 CharShape로 묶어 적용하고,
+    토글(굵게 등)과 문단정렬은 개별 Run, 줄간격은 ParagraphShape로 적용한다.
+    선택 영역이 있어야 의미가 있다(호출부에서 보장).
+    """
+    hwp = _h()
+    act = hwp.HAction
+    ps = hwp.HParameterSet
+
+    char_fields = {}   # CharShape에 묶어 넣을 값들
+    para_fields = {}   # ParagraphShape에 묶어 넣을 값들
+    toggles = []       # Run 액션들
+    para_aligns = []
+
+    for a in actions:
+        func = a.get("func")
+        val = a.get("value")
+        if func in _TOGGLE_ACTION:
+            toggles.append(_TOGGLE_ACTION[func])
+        elif func in _PARA_ACTION:
+            para_aligns.append(_PARA_ACTION[func])
+        elif func == "글씨체":
+            char_fields["face"] = val
+        elif func == "글씨크기":
+            char_fields["height"] = float(val)
+        elif func == "자간":
+            char_fields["spacing"] = int(val)
+        elif func == "글자색":
+            char_fields["color"] = val
+        elif func == "줄간격":
+            para_fields["line_spacing"] = int(val)
+        # 들여쓰기/내어쓰기는 같은 필드(Indentation)의 부호 차이 (실측 2026-07-15)
+        #   양수 = 첫 줄을 안으로, 음수 = 첫 줄을 밖으로. 단위는 pt(=100 HwpUnit).
+        elif func == "들여쓰기":
+            para_fields["indent_pt"] = abs(float(val))
+        elif func == "내어쓰기":
+            para_fields["indent_pt"] = -abs(float(val))
+        elif func == "왼쪽여백":
+            para_fields["left_mm"] = float(val)
+        elif func == "오른쪽여백":
+            para_fields["right_mm"] = float(val)
+        # 한글 줄나눔 단위 (실측 2026-07-16): BreakNonLatinWord
+        #   1 = 글자 단위(기본, 단어 중간에서 잘림) / 0 = 어절 단위
+        elif func == "어절단위 줄바꿈":
+            para_fields["break_nonlatin"] = 0
+        elif func == "자간 자동조절":
+            para_fields["condense"] = int(val)
+
+    # 1) 값 있는 글자서식 묶어서 한 번에
+    if char_fields:
+        act.GetDefault("CharShape", ps.HCharShape.HSet)
+        if "face" in char_fields:
+            ps.HCharShape.FaceNameHangul = char_fields["face"]
+            ps.HCharShape.FaceNameLatin = char_fields["face"]
+        if "height" in char_fields:
+            ps.HCharShape.Height = hwp.PointToHwpUnit(char_fields["height"])
+        if "spacing" in char_fields:
+            ps.HCharShape.SpacingHangul = char_fields["spacing"]
+            ps.HCharShape.SpacingLatin = char_fields["spacing"]
+        if "color" in char_fields:
+            ps.HCharShape.TextColor = char_fields["color"]
+        act.Execute("CharShape", ps.HCharShape.HSet)
+
+    # 2) 토글 기능
+    for action_id in toggles:
+        act.Run(action_id)
+
+    # 3) 문단 정렬
+    for action_id in para_aligns:
+        act.Run(action_id)
+
+    # 4) 값 있는 문단서식(줄간격·들여쓰기/내어쓰기·좌우여백) 묶어서 한 번에
+    if para_fields:
+        act.GetDefault("ParagraphShape", ps.HParaShape.HSet)
+        if "line_spacing" in para_fields:
+            ps.HParaShape.LineSpacing = para_fields["line_spacing"]
+            ps.HParaShape.LineSpacingType = 0
+        if "indent_pt" in para_fields:
+            ps.HParaShape.Indentation = hwp.PointToHwpUnit(para_fields["indent_pt"])
+        if "left_mm" in para_fields:
+            ps.HParaShape.LeftMargin = hwp.MiliToHwpUnit(para_fields["left_mm"])
+        if "right_mm" in para_fields:
+            ps.HParaShape.RightMargin = hwp.MiliToHwpUnit(para_fields["right_mm"])
+        if "break_nonlatin" in para_fields:
+            ps.HParaShape.BreakNonLatinWord = para_fields["break_nonlatin"]
+        if "condense" in para_fields:
+            ps.HParaShape.Condense = para_fields["condense"]
+        act.Execute("ParagraphShape", ps.HParaShape.HSet)
+
+
+# ── 팔레트: 블럭 실행 ──────────────────────────────────
+def run_block(block, template_path_fn=None, form_path_fn=None):
+    """팔레트 블럭 하나를 실행한다. 종류에 따라 삽입/적용 분기.
+
+    template_path_fn: 블럭 → 템플릿 조각 경로 (커서 위치에 삽입)
+    form_path_fn:     블럭 → 양식 파일 경로 (새 문서로 열기)
+    반환: (성공여부, 상태메시지)
+    """
+    btype = block.get("type")
+    if btype == "char":
+        insert_plain(block.get("value", ""))
+        return True, "삽입"
+    if btype == "function":
+        if not has_selection():
+            return False, "기능은 글자를 선택한 뒤 눌러주세요"
+        execute_function_block(block.get("actions", []))
+        return True, "기능 적용"
+    if btype == "template":
+        if template_path_fn is None:
+            return False, "템플릿 경로를 찾을 수 없습니다"
+        path = template_path_fn(block)
+        if not path:
+            return False, (f"템플릿을 찾을 수 없습니다: {block.get('template', '?')}"
+                           " (라이브러리에서 삭제된 것 같습니다)")
+        anchor = _h().GetPos()
+        # 팔레트로 넣을 땐 채울 내용이 없으므로, 삽입한 범위 안의 빈칸만 청소한다
+        end_para = measure_insert_span(anchor, lambda: insert_fragment(path))
+        strip_slot_markers(anchor, end_para)
+        return True, "템플릿 삽입"
+    if btype == "form":
+        if form_path_fn is None:
+            return False, "양식 경로를 찾을 수 없습니다"
+        path = form_path_fn(block)
+        if not path:
+            return False, (f"양식을 찾을 수 없습니다: {block.get('form', '?')}"
+                           " (라이브러리에서 삭제된 것 같습니다)")
+        open_form(path)
+        # 새 문서로 연 것이므로 빈칸은 남겨둔다 — 사용자가 채우거나
+        # \라벨\ 변환으로 채운다.
+        return True, "양식 열기"
+    return False, f"알 수 없는 블럭: {btype}"
+
+
+def apply_default_format(fmt, text=None):
+    """선택 영역을 기본 서식으로 초기화(글자모양+문단모양). text 주면 교체 삽입.
+
+    fmt: palette.get_default_format() 결과.
+    """
+    hwp = _h()
+    act = hwp.HAction
+    ps = hwp.HParameterSet
+    if text is not None:
+        delete_selection()
+    act.Run("StyleClearCharShape")
+
+    act.GetDefault("CharShape", ps.HCharShape.HSet)
+    ps.HCharShape.FaceNameHangul = fmt.get("font", "함초롬바탕")
+    ps.HCharShape.FaceNameLatin = fmt.get("font", "함초롬바탕")
+    ps.HCharShape.Height = hwp.PointToHwpUnit(fmt.get("size_pt", 10.0))
+    ps.HCharShape.SpacingHangul = fmt.get("spacing", 0)
+    ps.HCharShape.SpacingLatin = fmt.get("spacing", 0)
+    # StyleClearCharShape만으로는 굵게/기울임/밑줄이 남을 수 있어 명시적으로 끔
+    ps.HCharShape.Bold = 0
+    ps.HCharShape.Italic = 0
+    ps.HCharShape.UnderlineType = 0
+    ps.HCharShape.TextColor = hwp.rgb_color(0, 0, 0)
+    act.Execute("CharShape", ps.HCharShape.HSet)
+
+    act.GetDefault("ParagraphShape", ps.HParaShape.HSet)
+    ps.HParaShape.LineSpacing = fmt.get("line_spacing", 160)
+    ps.HParaShape.LineSpacingType = 0
+    ps.HParaShape.Indentation = 0
+    ps.HParaShape.LeftMargin = 0
+    ps.HParaShape.RightMargin = 0
+    ps.HParaShape.PrevSpacing = 0
+    ps.HParaShape.NextSpacing = 0
+    ps.HParaShape.AlignType = fmt.get("align", 0)
+    ps.HParaShape.BreakNonLatinWord = 1   # 한글 기본값(글자 단위)으로 복귀
+    ps.HParaShape.Condense = 0            # 자간 자동조절 해제
+    act.Execute("ParagraphShape", ps.HParaShape.HSet)
+
+    if text is not None:
+        insert_plain(text)
+
+
+# ── 라이브러리: 마크다운(\라벨\) 변환 실행 ───────────────
+def execute_library_plan(ops, template_path_fn, form_path_fn=None):
+    r"""parser.build_library_plan()의 실행 계획을 문서에 반영한다.
+
+    호출 전에 선택 영역은 삭제돼 있어야 한다(커서 = 삽입 지점).
+
+    2단계 방식: ① 텍스트 줄과 '템플릿 자리표시 마커'를 순서대로 삽입 →
+    ② 마커를 찾아 조각으로 바꾸고, 이어서 빈칸(\)을 아랫줄 내용으로 채움.
+    한 번에 삽입하지 않는 이유: insert_file 직후 커서가 조각 뒤로 이동하지
+    않아(실측) 순차 삽입 순서가 꼬이기 때문 — 마커 방식이 순서를 보장한다.
+
+    양식('form')은 성격이 달라 따로 처리한다 — 새 문서를 여는 것이라 마커를
+    심어둔 문서 자체가 사라진다. 그래서 계획에 양식이 있으면 그것만 처리한다.
+    """
+    import time as _time
+    hwp = _h()
+    act = hwp.HAction
+
+    # ── 양식이 있으면: 새 문서로 열고 빈칸만 채운다 (마커 방식 안 씀) ──
+    form_op = next((o for o in ops if o[0] == "form"), None)
+    if form_op is not None:
+        _, item, fills = form_op
+        path = form_path_fn(item) if form_path_fn else None
+        if not path:
+            return {"templates": 0, "slots_filled": 0, "forms": 0,
+                    "error": f"양식 파일을 찾을 수 없습니다: {item.get('name', '?')}"}
+        open_form(path)
+        hwp.MoveDocBegin()
+        # 새로 연 양식 문서 전체가 대상이므로 여기서는 범위 제한을 두지 않는다
+        # (사용자가 쓴 다른 내용이 섞여 있을 수 없는, 유일하게 안전한 경우)
+        filled = fill_slots(hwp.GetPos(), fills, end_para=None)
+        return {"templates": 0, "slots_filled": filled, "forms": 1}
+
+    marker_base = "◈LIB%d_" % (int(_time.time() * 1000) % 10**9)
+
+    # ① 텍스트/마커 순차 삽입
+    templates = []
+    first = True
+    for op in ops:
+        if not first:
+            act.Run("BreakPara")
+        first = False
+        if op[0] == "line":
+            if op[1]:
+                insert_plain(op[1])
+        else:                               # ('template', item, fills)
+            insert_plain(marker_base + str(len(templates)) + "◈")
+            templates.append(op)
+
+    # ② 마커 → 조각 치환 + 빈칸(\) 순서대로 채움
+    filled = 0
+    for idx, (_, item, fills) in enumerate(templates):
+        marker = marker_base + str(idx) + "◈"
+        hwp.MoveDocBegin()
+        if not find_text(marker):
+            applog.warn(f"마커 유실로 템플릿을 건너뜀: {item.get('name', '?')}")
+            continue
+        delete_selection()
+        anchor = hwp.GetPos()
+        path = template_path_fn(item)
+        end_para = measure_insert_span(anchor, lambda p=path: insert_fragment(p))
+        filled += fill_slots(anchor, fills, end_para)
+    return {"templates": len(templates), "slots_filled": filled, "forms": 0}

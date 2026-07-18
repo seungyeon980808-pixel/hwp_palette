@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="hwp_palette — 블럭 격자">
+  <defs>
+    <radialGradient id="bgA" cx="50%" cy="60%" r="72%">
+      <stop offset="0%" stop-color="#23366b"/>
+      <stop offset="66%" stop-color="#0b1128"/>
+    </radialGradient>
+  </defs>
+  <rect width="96" height="96" rx="20" fill="url(#bgA)"/>
+
+  <!-- 빈 칸은 stroke 가 아니라 연한 채움 — 16px 로 줄여도 살아남게. -->
+  <!-- row 0 : 문자 블럭(1칸) + 템플릿 블럭(2칸) -->
+  <rect x="22" y="22" width="14" height="14" rx="3.5" fill="#4c9dff"/>
+  <rect x="41" y="22" width="33" height="14" rx="3.5" fill="#f5f8ff"/>
+
+  <!-- row 1 : 빈칸 · 빈칸 · 기능 블럭 -->
+  <rect x="22" y="41" width="14" height="14" rx="3.5" fill="#2b3d63"/>
+  <rect x="41" y="41" width="14" height="14" rx="3.5" fill="#2b3d63"/>
+  <rect x="60" y="41" width="14" height="14" rx="3.5" fill="#4c9dff"/>
+
+  <!-- row 2 : 문자 블럭 · 빈칸 · 빈칸 -->
+  <rect x="22" y="60" width="14" height="14" rx="3.5" fill="#f5f8ff"/>
+  <rect x="41" y="60" width="14" height="14" rx="3.5" fill="#2b3d63"/>
+  <rect x="60" y="60" width="14" height="14" rx="3.5" fill="#2b3d63"/>
+</svg>

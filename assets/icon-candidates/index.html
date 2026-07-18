@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>hwp_palette 아이콘 — D3 중앙 정렬</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{--main:#0969da;--sub:#0e7490;--bg:#f6f8fa;--text:#0d1117;--divider:#d0d7de;--surface:#fff;--muted:#57606a;--muted-soft:#8b949e}
+  *{box-sizing:border-box}
+  body{margin:0;padding:36px 20px 80px;background:var(--bg);color:var(--text);
+       font-family:"IBM Plex Sans KR",system-ui,sans-serif;line-height:1.6}
+  .wrap{max-width:1000px;margin:0 auto}
+  h1{font-size:26px;letter-spacing:-.02em;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 28px}
+  .sub b{color:var(--text)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:720px){.grid{grid-template-columns:1fr}}
+  .cand{border:1px solid var(--divider);border-radius:14px;background:var(--surface);padding:18px}
+  .cand h2{font-size:17px;margin:0 0 2px;display:flex;align-items:center;gap:8px}
+  .pick{font-family:"IBM Plex Mono",monospace;font-size:11px;color:#fff;background:#2da44e;padding:2px 8px;border-radius:999px}
+  .old{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--muted);border:1px solid var(--divider);padding:2px 8px;border-radius:999px}
+  .why{font-size:13px;color:var(--muted);margin:4px 0 14px;min-height:44px}
+  .why b{color:var(--text)}
+  img.big{width:100%;height:auto;border-radius:12px;display:block;background:#8a8f98}
+  .sizes{display:flex;align-items:flex-end;gap:14px;margin-top:12px;padding:12px;border-radius:8px;
+         background:linear-gradient(45deg,#eef1f4 25%,transparent 25%,transparent 75%,#eef1f4 75%),
+                    linear-gradient(45deg,#eef1f4 25%,#fff 25%,#fff 75%,#eef1f4 75%);
+         background-size:14px 14px;background-position:0 0,7px 7px}
+  .sizes div{text-align:center}
+  .sizes img{display:block}
+  .cap{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--muted-soft);margin-top:5px}
+  .s96 img{width:96px;height:96px}.s48 img{width:48px;height:48px}
+  .s32 img{width:32px;height:32px}.s16 img{width:16px;height:16px}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin-top:14px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--divider)}
+  th{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--muted-soft);font-weight:500}
+  td.mono{font-family:"IBM Plex Mono",monospace}
+  .bad{color:#cf222e;font-weight:600}.good{color:#1a7f37;font-weight:600}
+  .box{border:1px solid var(--divider);border-left:3px solid var(--sub);border-radius:8px;
+       background:var(--surface);padding:15px 18px;margin-top:26px;font-size:14px}
+  .box b{color:var(--sub)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>D3 — 팔레트 중앙 정렬</h1>
+  <p class="sub">
+    팔레트가 오른쪽으로 밀려 있던 건 <b>엄지 쪽을 파면서 왼쪽 살이 빠져</b> 무게중심이 이동한 탓입니다.
+    중심점 좌표는 그대로였지만 모양이 비대칭이 됐죠. 실제 경계를 재서 <b>팔레트·물감·구멍·붓을 통째로</b> 옮겼습니다.
+  </p>
+
+  <div class="grid">
+    <div class="cand">
+      <h2>이전 <span class="old">오른쪽 치우침</span></h2>
+      <p class="why">팔레트가 <b>오른쪽 벽에 거의 붙어</b> 있고 왼쪽이 휑합니다.</p>
+      <img class="big" src="d3-before.png" alt="이전">
+    </div>
+
+    <div class="cand">
+      <h2>지금 <span class="pick">중앙 정렬</span></h2>
+      <p class="why">좌우 여백이 같아졌습니다. 구도는 그대로 두고 <b>위치만</b> 옮겼습니다.</p>
+      <img class="big" src="d3-centered.png" alt="중앙 정렬">
+      <div class="sizes">
+        <div class="s96"><img src="d3-centered.png" alt=""><div class="cap">96</div></div>
+        <div class="s48"><img src="d3-centered.png" alt=""><div class="cap">48</div></div>
+        <div class="s32"><img src="d3-centered.png" alt=""><div class="cap">32</div></div>
+        <div class="s16"><img src="d3-centered.png" alt=""><div class="cap">16</div></div>
+      </div>
+    </div>
+  </div>
+
+  <table>
+    <tr><th></th><th>왼쪽 여백</th><th>오른쪽 여백</th><th>실제 중심</th></tr>
+    <tr><td>이전</td><td class="mono bad">17.8</td><td class="mono bad">2.7</td><td class="mono bad">x 55.5</td></tr>
+    <tr><td>지금</td><td class="mono good">10.3</td><td class="mono good">10.2</td><td class="mono good">x 48.0</td></tr>
+  </table>
+
+  <div class="box">
+    <p style="margin:0"><b>아직 사이트엔 안 넣었습니다.</b>
+      hwp 카드는 여전히 예전 아이콘(파란 원 3개)입니다. 이대로 확정이면 SVG 로 굽고 카드에 반영하겠습니다.</p>
+  </div>
+</div>
+</body>
+</html>

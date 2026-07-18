@@ -16,6 +16,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import hwp_engine
+import engine_library
 import library
 import builtin_chars
 
@@ -69,7 +70,7 @@ class StyleFieldDialog(tk.Toplevel):
         self.vars = {}
         body = tk.Frame(self, bg=BG, padx=16)
         body.pack(fill="x")
-        for label in hwp_engine.CHARSHAPE_FIELD_LABELS:
+        for label in engine_library.CHARSHAPE_FIELD_LABELS:
             v = tk.BooleanVar(value=False)
             self.vars[label] = v
             tk.Checkbutton(body, text=label, variable=v, font=(FONT, 10),
@@ -461,7 +462,7 @@ class LibraryManager(tk.Toplevel):
         self.wait_window(dlg)
         if not dlg.result:
             return
-        delta = hwp_engine.capture_charshape(dlg.result)
+        delta = engine_library.capture_charshape(dlg.result)
         if not delta:
             messagebox.showwarning("캡처 실패", "선택한 항목을 읽지 못했습니다.", parent=self)
             return
@@ -503,7 +504,7 @@ class LibraryManager(tk.Toplevel):
             return
         if not hwp_engine.has_selection():
             # 드래그가 없어도, 표 안을 클릭만 해뒀으면 표 전체를 자동 선택
-            if not hwp_engine.auto_select_table_if_inside():
+            if not engine_library.auto_select_table_if_inside():
                 messagebox.showwarning("선택 없음",
                     "한글에서 템플릿으로 저장할 영역을 드래그로 선택하거나,\n"
                     "표를 저장하려면 표 안을 클릭만 해둬도 됩니다.", parent=self)
@@ -530,7 +531,7 @@ class LibraryManager(tk.Toplevel):
         library.FRAGMENTS_DIR.mkdir(exist_ok=True)
         tmp_path = library.FRAGMENTS_DIR / f"_tmp_{int(time.time()*1000)}.hwp"
         try:
-            hwp_engine.capture_fragment(tmp_path)
+            engine_library.capture_fragment(tmp_path)
             library.add_template_from_capture(name, tmp_path, label=label,
                                               group=group, slot_count=slot_count)
         except Exception as e:
@@ -559,7 +560,7 @@ class LibraryManager(tk.Toplevel):
         slot_count = 0
         try:
             hwp_engine.connect()
-            slot_count = hwp_engine.count_slots_in_file(path)
+            slot_count = engine_library.count_slots_in_file(path)
         except Exception:
             pass
         if slot_count:
@@ -594,13 +595,13 @@ class LibraryManager(tk.Toplevel):
                     messagebox.showwarning("선택 없음",
                         "서식을 입힐 글자를 한글에서 먼저 선택해주세요.", parent=self)
                     return
-                hwp_engine.apply_charshape_delta(item["fields"])
+                engine_library.apply_charshape_delta(item["fields"])
             elif cat == "문자":
                 hwp_engine.insert_plain(item["text"])
             elif cat == "양식":
-                hwp_engine.open_form(library.template_path(item))
+                engine_library.open_form(library.template_path(item))
             else:
-                hwp_engine.insert_fragment(library.template_path(item))
+                engine_library.insert_fragment(library.template_path(item))
         except Exception as e:
             messagebox.showerror("오류", f"{type(e).__name__}: {e}", parent=self)
 

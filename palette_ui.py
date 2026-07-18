@@ -17,6 +17,7 @@ import palette
 import library
 import func_catalog
 import hwp_engine
+import engine_library
 
 BG = "#f5f5f7"
 CARD = "#ffffff"
@@ -666,7 +667,7 @@ class SettingsWindow(tk.Toplevel):
             messagebox.showerror("연결 실패", f"한글을 먼저 실행해주세요.\n{e}", parent=self)
             return
         if not hwp_engine.has_selection():
-            if not hwp_engine.auto_select_table_if_inside():
+            if not engine_library.auto_select_table_if_inside():
                 messagebox.showwarning("선택 없음",
                     "한글에서 템플릿으로 저장할 영역을 드래그로 선택하거나,\n"
                     "표를 저장하려면 표 안을 클릭만 해둬도 됩니다.", parent=self)
@@ -690,7 +691,7 @@ class SettingsWindow(tk.Toplevel):
         library.FRAGMENTS_DIR.mkdir(exist_ok=True)
         tmp = library.FRAGMENTS_DIR / f"_tmp_{int(time.time()*1000)}.hwp"
         try:
-            hwp_engine.capture_fragment(tmp)
+            engine_library.capture_fragment(tmp)
             item_id = library.add_template_from_capture(
                 name, tmp, label=label, group=group, slot_count=slot_count)
         except Exception as e:

@@ -121,8 +121,11 @@ def _replace_char_tokens(line, lookup, warnings):
         entry = lookup.get(label)
         if entry and entry[0] == '문자':
             return entry[1]['text']
-        if entry and entry[0] == '템플릿':
-            warnings.append(f"템플릿 라벨은 한 줄에 단독으로 써주세요: \\{label}\\")
+        # 템플릿·양식은 줄 단위로만 처리된다(빈칸을 아랫줄들로 채우는 구조라
+        # 줄 중간에서는 의미가 없다). 등록은 돼 있으니 '없는 라벨'로 말하면 안 된다.
+        if entry and entry[0] in ('템플릿', '양식'):
+            warnings.append(
+                f"{entry[0]} 라벨은 한 줄에 단독으로 써주세요: \\{label}\\")
         elif entry and entry[0] == '서식':
             warnings.append(f"서식 라벨은 아직 변환 미지원: \\{label}\\")
         else:

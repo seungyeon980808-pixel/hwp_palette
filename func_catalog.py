@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """기능 카탈로그 — '기능' 블럭에 병렬로 담을 수 있는 한글 조작 목록.
 
-각 기능의 실제 실행은 hwp_engine.execute_function_block()이 한다. 여기서는
+각 기능의 실제 실행은 engine_library.execute_function_block()이 한다. 여기서는
 UI가 "어떤 기능이 있고, 값을 어떻게 입력받는지"만 정의한다.
 
 kind:
