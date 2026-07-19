@@ -43,6 +43,8 @@ GRID_WIDTH_PX = 420      # 격자가 쓸 가로 폭
 CELL_MAX_PX = 34
 CELL_MIN_PX = 16
 CELL_GAP = 2
+HEADER_ROWS = 1          # 격자 맨 위 열 머리글 한 줄 (좌표 계산 시 빼야 한다)
+HEADER_PX = 12           # 그 머리글이 차지하는 높이(px)
 EMPTY_BG = "#fbfbfd"     # 빈칸 배경
 RANGE_BG = "#d8e9ff"     # 끌어서 지정 중인 범위
 
@@ -420,6 +422,11 @@ class SettingsWindow(tk.Toplevel):
             grid.columnconfigure(c, minsize=cell_px + CELL_GAP, weight=0,
                                  uniform="cell")
 
+        # 열 머리글 (UI 제안 12) — 15칸이 되니 "몇 번째 칸"을 셀 수 있어야 한다
+        for cc in range(cols):
+            tk.Label(grid, text=str(cc + 1), font=(FONT, 7), bg=CARD,
+                     fg=MUTED).grid(row=0, column=cc, pady=(0, 1))
+
         self._used_cells = palette.occupied_cells(blocks)
 
         # ① 블럭 타일 — 저장된 좌표(row, col)에 span×rows 크기로
@@ -430,7 +437,8 @@ class SettingsWindow(tk.Toplevel):
                             width=cell_px * span + CELL_GAP * (span - 1),
                             height=cell_px * rows + CELL_GAP * (rows - 1))
             cell.pack_propagate(False)
-            cell.grid(row=int(blk.get("row", 0)), column=int(blk.get("col", 0)),
+            cell.grid(row=int(blk.get("row", 0)) + HEADER_ROWS,
+                      column=int(blk.get("col", 0)),
                       columnspan=span, rowspan=rows,
                       padx=CELL_GAP // 2, pady=CELL_GAP // 2)
             self._make_tile(cell, i, blk, span).pack(fill="both", expand=True)
@@ -517,7 +525,8 @@ class SettingsWindow(tk.Toplevel):
         f = tk.Frame(grid, bg=EMPTY_BG, width=cell_px, height=cell_px,
                      highlightbackground=BORDER, highlightthickness=1)
         f.pack_propagate(False)
-        f.grid(row=r, column=c, padx=CELL_GAP // 2, pady=CELL_GAP // 2)
+        f.grid(row=r + HEADER_ROWS, column=c,
+               padx=CELL_GAP // 2, pady=CELL_GAP // 2)
         self._empty_map[str(f)] = (r, c)
         f.bind("<ButtonPress-1>", lambda e, rc=(r, c): self._empty_press(rc))
         f.bind("<B1-Motion>", self._empty_motion)
@@ -543,7 +552,7 @@ class SettingsWindow(tk.Toplevel):
             return None
         px = self._grid_cell_px + CELL_GAP
         c = (x_root - g.winfo_rootx() - 2) // px
-        r = (y_root - g.winfo_rooty() - 2) // px
+        r = (y_root - g.winfo_rooty() - 2 - HEADER_PX) // px
         if 0 <= c < self._grid_cols and 0 <= r < self._grid_total_rows:
             return (int(r), int(c))
         return None
@@ -585,8 +594,13 @@ class SettingsWindow(tk.Toplevel):
         self._pick_tool(row, col, span, rows)
 
     def _paint_range(self):
-        """지금 끌고 있는 사각형을 칠한다."""
+        """지금 끌고 있는 사각형을 칠하고, 크기·자리를 글로도 알려준다."""
         r0, c0, span, rows = self._drag_area()
+        try:    # UI 제안 12 — 지금 몇 칸을 잡았는지 숫자로 (열 머리글과 짝)
+            self.block_head.config(
+                text=f"{span}×{rows}칸  ·  {r0 + 1}번째 줄, {c0 + 1}번째 칸부터")
+        except Exception:
+            pass
         for key, (rr, cc) in self._empty_map.items():
             try:
                 w = self.nametowidget(key)

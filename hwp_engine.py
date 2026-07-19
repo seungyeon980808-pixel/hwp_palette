@@ -170,6 +170,16 @@ def _attach_without_resize():
         return None
 
 
+def is_connected():
+    """지금 한글에 붙어 있는가 (표시등용). 연결을 새로 만들지 않는다.
+
+    주기적으로 부를 것이므로 **절대 무거워지면 안 된다** — 새 연결을 시도하거나
+    문서를 건드리면 사용자가 타자를 치는 중에 한글을 방해한다. 이미 잡아 둔
+    객체의 원시 COM 값을 한 번 읽어 보는 것으로 끝낸다.
+    """
+    return _connection_error(hwp) is None
+
+
 def connect():
     """이미 연결돼 있으면 재사용, 아니면 새로 연결. 실패 시 예외 발생.
 

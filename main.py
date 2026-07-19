@@ -238,6 +238,43 @@ def _form_plan_conflict(ops):
     return None
 
 
+def _plan_summary(ops, warns):
+    """실행 계획을 한눈에 보이는 문구로 (UI 제안 5)."""
+    kinds = {}
+    slots = 0
+    for op in ops:
+        kinds[op[0]] = kinds.get(op[0], 0) + 1
+        if op[0] in ("template", "form"):
+            slots += len(op[2])
+    label = {"line": "글자 줄", "rich_line": "서식 적용 줄",
+             "template": "템플릿", "form": "양식"}
+    parts = [f"{label.get(k, k)} {v}개" for k, v in kinds.items()]
+    if slots:
+        parts.append(f"빈칸 {slots}개 채움")
+    if warns:
+        parts.append(f"주의 {len(warns)}건")
+    return " · ".join(parts) or "바꿀 내용 없음"
+
+
+def _confirm_plan(ops, warns):
+    """되돌리기 어려운 변환 전에 무엇이 일어날지 보여주고 확인받는다.
+
+    변환은 선택 영역을 지우고 시작하므로, 잘못 누르면 한글에서 Ctrl+Z 를 여러 번
+    눌러야 한다. 파서가 이미 계획(ops)을 다 계산해 두므로 보여주는 비용은 0이다.
+    주의가 있거나 문서를 크게 바꿀 때만 묻는다 — 매번 물으면 성가시다.
+    """
+    heavy = sum(1 for o in ops if o[0] in ("template", "form"))
+    if not warns and heavy == 0:
+        return True                     # 글자만 바꾸는 가벼운 변환은 그냥 진행
+    lines = ["이렇게 바꿉니다:", "", "  " + _plan_summary(ops, warns)]
+    if warns:
+        lines += ["", "주의:"] + [f"  · {w}" for w in warns[:6]]
+        if len(warns) > 6:
+            lines.append(f"  … 외 {len(warns) - 6}건")
+    lines += ["", "진행할까요?"]
+    return messagebox.askokcancel("변환 미리보기", "\n".join(lines))
+
+
 def fn_convert():
     """선택 영역 마크다운 변환 — 시험문제 문법 또는 라이브러리 \\라벨\\ 문법"""
     hwp_engine._diag("fn_convert: 버튼 눌린 직후")
@@ -271,6 +308,9 @@ def fn_convert():
             if blocked:
                 messagebox.showwarning("양식은 따로 변환해주세요", blocked)
                 notify("warn", "양식은 라벨만 따로 선택해 변환해주세요")
+                return
+            if not _confirm_plan(ops, warns):
+                notify("info", "변환을 취소했습니다")
                 return
             hwp_engine.delete_selection()
             result = engine_library.execute_library_plan(
@@ -444,6 +484,9 @@ if _icon_small is not None:
     _icon_lbl.bind("<B1-Motion>", drag)
 tk.Label(title, text="hwp_palette",
          font=_font(10, "bold"), fg=TEXT, bg=CARD).pack(side="left")
+# 한글 연결 표시등 (UI 제안 4) — 눌러서 실패해야 알던 것을 미리 보여준다
+conn_dot = tk.Label(title, text="●", font=_font(9), fg="#c7c7cc", bg=CARD)
+conn_dot.pack(side="left", padx=(8, 0))
 tk.Label(title, text=f"v{VERSION}",
          font=_font(8), fg=MUTED, bg=CARD).pack(side="left", padx=(6, 0))
 tk.Button(title, text="✕", command=root.destroy,
@@ -543,13 +586,15 @@ btn_area = tk.Frame(root, bg=BG, padx=10, pady=4)
 btn_area.pack(fill="x")
 top_row = tk.Frame(btn_area, bg=BG)
 top_row.pack(fill="x")
-tk.Button(top_row, text="마크다운 변환\n(Ctrl+T)",
-          command=fn_convert, width=12,
-          font=_font(9, "bold"), fg="white", bg=ACCENT,
-          activebackground="#0077ed", activeforeground="white",
-          bd=0, pady=6, cursor="hand2").pack(side="left", fill="y")
+top_row.columnconfigure(1, weight=1)
+convert_btn = tk.Button(top_row, text="마크다운 변환\n(Ctrl+T)",
+                        command=fn_convert, width=12,
+                        font=_font(9, "bold"), fg="white", bg=ACCENT,
+                        activebackground="#0077ed", activeforeground="white",
+                        bd=0, pady=6, cursor="hand2")
+convert_btn.grid(row=0, column=0, sticky="ns")     # 옆 칸 높이에 맞춰 늘어난다
 quick_area = tk.Frame(top_row, bg=BG)
-quick_area.pack(side="left", fill="both", expand=True, padx=(6, 0))
+quick_area.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
 sub_btn = tk.Frame(btn_area, bg=BG)
 sub_btn.pack(fill="x", pady=(4, 0))
 tk.Button(sub_btn, text="기본 서식으로 변환", command=fn_reset_format,
@@ -623,6 +668,9 @@ def render_palette():
 
     if main_tab is not None:
         if main_tab.get("blocks"):
+            # 버튼칸이 여러 줄이어도 변환 버튼이 같은 높이로 늘어난다 (UI 제안 19)
+            # — top_row 를 grid 로 짜고 두 칸 모두 sticky="ns" 로 뒀기 때문에
+            #   높이 계산 없이 Tk 가 맞춰 준다.
             _render_block_grid(quick_area, main_tab,
                                win_w - int(120 * SCALE))   # 변환 버튼 몫 제외
         else:
@@ -712,13 +760,45 @@ def _block_label(blk):
     return blk.get("name", "")
 
 
-def _add_tooltip(widget, text):
-    """마우스를 올리면 전체 이름을 말풍선으로 보여준다 (개선안 15).
+def _block_tooltip(blk):
+    """블럭 툴팁 문구 — 이름뿐 아니라 **내용**까지 보여준다 (UI 제안 6).
+
+    이름만으로는 서식 조합에 뭐가 들었는지, 템플릿에 빈칸이 몇 개인지 알 수 없어
+    눌러 봐야 알았다. 툴팁에 미리 적어 두면 잘못 누르는 일이 준다.
+    """
+    btype = blk.get("type")
+    name = _block_label(blk)
+    if btype == "char":
+        return f"문자 삽입\n{blk.get('value', '')}"
+    if btype == "function":
+        parts = []
+        for a in blk.get("actions", []):
+            v = a.get("value")
+            parts.append(a["func"] if v is None else f"{a['func']} {v}")
+        return f"서식 조합 · {name}\n" + (" + ".join(parts) or "(비어 있음)")
+    if btype in ("template", "form"):
+        cat = "양식" if btype == "form" else "템플릿"
+        it = library.get_item(cat, item_id=blk.get("ref"),
+                              name=blk.get("form" if btype == "form" else "template"))
+        if not it:
+            return f"{cat} · {name}\n라이브러리에서 삭제된 항목입니다"
+        n = int(it.get("slot_count") or 0)
+        where = "새 문서로 열기" if btype == "form" else "커서 자리에 삽입"
+        blanks = f"빈칸 {n}개 — 변환 시 아랫줄 {n}줄이 채워집니다" if n else "빈칸 없음"
+        return f"{cat} · {it['name']}\n{where} · {blanks}"
+    return name
+
+
+def _add_tooltip(widget, text, force=False):
+    """마우스를 올리면 말풍선을 보여준다 (개선안 15, UI 제안 6).
 
     블럭 이름은 칸 폭 때문에 잘릴 수밖에 없는데, 잘린 채로는 비슷한 이름을
-    구별할 수 없었다. 잘렸을 때만 붙인다.
+    구별할 수 없었다. 지금은 이름이 안 잘려도 '내용'을 보여주므로 늘 붙인다.
+    force: 문구만 갈아끼우고 싶을 때(연결 표시등처럼 상태가 바뀌는 위젯).
     """
-    tip = {"win": None}
+    tip = {"win": None, "text": text}
+    if force:
+        widget._tip_state = tip
 
     def show(_event=None):
         if tip["win"] is not None:
@@ -729,8 +809,9 @@ def _add_tooltip(widget, text):
                         f"+{widget.winfo_rooty() + widget.winfo_height() + 4}")
         # 메인 창이 topmost라 말풍선도 올려주지 않으면 뒤로 숨는다
         win.attributes("-topmost", True)
-        tk.Label(win, text=text, font=_font(8), fg=TEXT, bg="#ffffe0",
-                 bd=1, relief="solid", padx=6, pady=3).pack()
+        tk.Label(win, text=tip["text"], font=_font(8), fg=TEXT, bg="#ffffe0",
+                 bd=1, relief="solid", padx=6, pady=3,
+                 justify="left").pack()
         tip["win"] = win
 
     def hide(_event=None):
@@ -757,8 +838,8 @@ def _make_block_button(parent, blk, span=1):
                     bg=blk.get("color") or _BLOCK_COLOR.get(blk.get("type"), CARD),
                     activebackground=BORDER, bd=1, relief="solid", pady=0,
                     cursor="hand2")
-    if label != full:
-        _add_tooltip(btn, full)
+    # 이름이 안 잘려도 '무엇이 들었는지'를 보여주므로 늘 붙인다 (UI 제안 6)
+    _add_tooltip(btn, _block_tooltip(blk))
     return btn
 
 
@@ -775,6 +856,29 @@ tk.Label(root, text=f"v{VERSION} · {RELEASE_DATE}",
 # 저작자 표기 — 자유 소프트웨어(AGPL-3.0). 전문은 저장소의 LICENSE 파일.
 tk.Label(root, text="만든이 박승연 · © 2026 · 자유 소프트웨어 (AGPL-3.0)",
          font=_font(7), fg=MUTED, bg=BG).pack(pady=(0, 8))
+
+def _poll_connection():
+    """연결 표시등 갱신 — 2초마다. 연결을 새로 만들지는 않는다."""
+    try:
+        ok = hwp_engine.is_connected()
+        conn_dot.config(fg="#34c759" if ok else "#c7c7cc")
+        _tip(conn_dot, "한글에 연결됨" if ok else
+             "한글에 연결 안 됨 — 버튼을 누르면 연결을 시도합니다")
+    except Exception:
+        pass
+    root.after(2000, _poll_connection)
+
+
+def _tip(widget, text):
+    """상태가 바뀌는 위젯의 툴팁 문구를 갈아끼운다 (바인딩은 한 번만)."""
+    state = getattr(widget, "_tip_state", None)
+    if state is None:
+        _add_tooltip(widget, text, force=True)
+    else:
+        state["text"] = text
+
+
+_poll_connection()
 
 # 단축키: Ctrl+T = 마크다운 변환
 root.bind_all("<Control-t>", lambda e: fn_convert())
