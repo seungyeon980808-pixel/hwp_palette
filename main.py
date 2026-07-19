@@ -539,17 +539,24 @@ def render_palette():
         return
 
     grid = tk.Frame(pal_area, bg=BG)
-    grid.pack(fill="x")
-    for c in range(cols):
-        grid.columnconfigure(c, weight=1, uniform="pal")
+    grid.pack(anchor="w")       # 창 폭에 맞춰 늘리지 않는다 — 칸 크기를 고정하려고
+    for i in range(cols):
+        grid.columnconfigure(i, minsize=_BLOCK_CELL_PX + _BLOCK_GAP_PX,
+                             weight=0, uniform="pal")
     r = c = 0
     for blk in blocks:
         span = min(int(blk.get("span", 1)), cols)
         if c + span > cols:      # 칸 넘치면 다음 줄
             r += 1
             c = 0
-        _make_block_button(grid, blk).grid(
-            row=r, column=c, columnspan=span, sticky="ew", padx=1, pady=1)
+        # 칸을 고정 크기 틀에 넣는다. 버튼을 그냥 grid 에 놓으면 글자 길이에 맞춰
+        # 칸이 넓어져 문자 블럭이 정사각형이 안 된다.
+        cell = tk.Frame(grid, bg=BG, height=_BLOCK_CELL_PX,
+                        width=_BLOCK_CELL_PX * span + _BLOCK_GAP_PX * (span - 1))
+        cell.pack_propagate(False)
+        cell.grid(row=r, column=c, columnspan=span,
+                  padx=_BLOCK_GAP_PX // 2, pady=_BLOCK_GAP_PX // 2)
+        _make_block_button(cell, blk, span).pack(fill="both", expand=True)
         c += span
         if c >= cols:
             r += 1
@@ -563,7 +570,22 @@ def render_palette():
 _BLOCK_COLOR = {"char": CARD, "template": "#eef4ff",
                 "function": "#fff4e6", "form": "#eafaf1"}
 _BLOCK_PREFIX = {"template": "▦ ", "function": "ƒ ", "form": "📄 "}
-_BLOCK_LABEL_MAX = 14
+
+# 팔레트 한 칸의 한 변(px). 문자 블럭(1칸)이 이 크기의 정사각형이 된다.
+_BLOCK_CELL_PX = 26
+_BLOCK_GAP_PX = 2
+
+
+def _block_label_max(span):
+    """칸 수에 맞는 글자 수 상한.
+
+    칸을 정사각형으로 고정했으므로 긴 이름은 넣을 자리가 없다. 넘치면 잘라서
+    보여주고 전체 이름은 툴팁으로 뜬다(_add_tooltip).
+
+    26px 칸에 9pt 한글이 대략 1.7자 들어가므로 칸당 2자로 잡는다. 이름이 길면
+    환경설정에서 그 블럭의 칸 수를 늘리는 게 정답이다.
+    """
+    return 2 if span <= 1 else span * 2
 
 
 def _block_label(blk):
@@ -612,15 +634,15 @@ def _add_tooltip(widget, text):
     # Toplevel 을 버튼의 자식으로 만들었기 때문에 Tk 가 함께 정리한다(실측 확인).
 
 
-def _make_block_button(parent, blk):
+def _make_block_button(parent, blk, span=1):
     full = _BLOCK_PREFIX.get(blk.get("type"), "") + _block_label(blk)
-    label = (full if len(full) <= _BLOCK_LABEL_MAX
-             else full[:_BLOCK_LABEL_MAX] + "…")
+    limit = _block_label_max(span)
+    label = full if len(full) <= limit else full[:limit] + "…"
     btn = tk.Button(parent, text=label,
                     command=lambda b=blk: run_palette_block(b),
                     font=(FONT, 9), fg=TEXT,
                     bg=_BLOCK_COLOR.get(blk.get("type"), CARD),
-                    activebackground=BORDER, bd=1, relief="solid", pady=1,
+                    activebackground=BORDER, bd=1, relief="solid", pady=0,
                     cursor="hand2")
     if label != full:
         _add_tooltip(btn, full)
