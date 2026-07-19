@@ -337,6 +337,16 @@ BORDER = "#d2d2d7"
 SUBBG  = "#fafafa"
 FONT   = "맑은 고딕"
 
+# 화면 크기 모드 — '크게'(1.3배)로 두면 글자·칸이 모두 30% 커진다.
+# 위젯을 만든 뒤에는 일괄 변경이 안 되므로(각각 폰트를 다시 줘야 함),
+# 시작할 때 읽어서 모든 크기에 곱하고, 전환 시에는 프로그램을 다시 시작한다.
+SCALE = settings.get_ui_scale()
+
+
+def _font(size, weight=None):
+    n = max(7, int(round(size * SCALE)))
+    return (FONT, n) if weight is None else (FONT, n, weight)
+
 
 root = tk.Tk()
 root.title(f"hwp_palette v{VERSION}")
@@ -348,40 +358,68 @@ def start_drag(e): root._x, root._y = e.x, e.y
 def drag(e): root.geometry(
     f"+{root.winfo_x()+e.x-root._x}+{root.winfo_y()+e.y-root._y}")
 
+# ── 앱 아이콘 (사용자 제작 hwp-final.svg 를 PNG 로 구운 것) ──
+_ICON_96 = pathlib.Path(__file__).parent / "assets" / "icon-96.png"
+_icon_img = _icon_small = None
+try:
+    _icon_img = tk.PhotoImage(file=str(_ICON_96))
+    root.iconphoto(True, _icon_img)                    # 작업표시줄/제목표시줄
+    _icon_small = _icon_img.subsample(4)               # 96 → 24px (창 안 표기용)
+except Exception as e:
+    applog.exc("앱 아이콘 로드 실패 — 기본 아이콘으로 실행", e)
+
+
+def _toggle_scale():
+    """작게(1.0) ↔ 크게(1.3) 전환. 위젯 폰트는 만든 뒤 못 바꾸므로 재시작한다."""
+    settings.set_ui_scale(1.3 if SCALE < 1.15 else 1.0)
+    import os
+    import sys
+    os.execl(sys.executable, sys.executable, str(pathlib.Path(__file__).resolve()))
+
+
 # 타이틀
 title = tk.Frame(root, bg=CARD, pady=5, padx=10)
 title.pack(fill="x")
 title.bind("<ButtonPress-1>", start_drag)
 title.bind("<B1-Motion>", drag)
+if _icon_small is not None:
+    _icon_lbl = tk.Label(title, image=_icon_small, bg=CARD)
+    _icon_lbl.pack(side="left", padx=(0, 6))
+    _icon_lbl.bind("<ButtonPress-1>", start_drag)
+    _icon_lbl.bind("<B1-Motion>", drag)
 tk.Label(title, text="hwp_palette",
-         font=(FONT, 10, "bold"), fg=TEXT, bg=CARD).pack(side="left")
+         font=_font(10, "bold"), fg=TEXT, bg=CARD).pack(side="left")
 tk.Label(title, text=f"v{VERSION}",
-         font=(FONT, 8), fg=MUTED, bg=CARD).pack(side="left", padx=(6, 0))
+         font=_font(8), fg=MUTED, bg=CARD).pack(side="left", padx=(6, 0))
 tk.Button(title, text="✕", command=root.destroy,
-          font=(FONT, 10), fg=MUTED, bg=CARD,
+          font=_font(10), fg=MUTED, bg=CARD,
           activebackground="#ff5c5c", activeforeground="white",
           bd=0, cursor="hand2").pack(side="right")
+tk.Button(title, text=("크게" if SCALE < 1.15 else "작게"),
+          command=_toggle_scale, font=_font(8), fg=MUTED, bg=CARD,
+          activebackground=BORDER, bd=0, padx=6,
+          cursor="hand2").pack(side="right", padx=(0, 4))
 tk.Frame(root, bg=BORDER, height=1).pack(fill="x")
 
 # 파일 버튼
 file_row = tk.Frame(root, bg=BG, padx=10, pady=5)
 file_row.pack(fill="x")
-for label, cmd in [("📄 새 문서", fn_new), ("📂 열기", fn_open), ("💾 저장", fn_save)]:
+for label, cmd in [("새 문서", fn_new), ("열기", fn_open), ("저장", fn_save)]:
     tk.Button(file_row, text=label, command=cmd,
-              font=(FONT, 8), fg=TEXT, bg=CARD,
+              font=_font(8), fg=TEXT, bg=CARD,
               activebackground=BORDER, bd=0, padx=5, pady=3,
               cursor="hand2").pack(side="left", padx=(0, 6))
 # 환경설정 / 양식 설정 / 라이브러리 버튼 — 오른쪽 끝
-tk.Button(file_row, text="⚙ 환경설정", command=lambda: fn_open_palette_settings(),
-          font=(FONT, 8), fg=TEXT, bg=CARD,
+tk.Button(file_row, text="환경설정", command=lambda: fn_open_palette_settings(),
+          font=_font(8), fg=TEXT, bg=CARD,
           activebackground=BORDER, bd=0, padx=5, pady=3,
           cursor="hand2").pack(side="right")
-tk.Button(file_row, text="📐 양식", command=fn_open_settings,
-          font=(FONT, 8), fg=TEXT, bg=CARD,
+tk.Button(file_row, text="양식", command=fn_open_settings,
+          font=_font(8), fg=TEXT, bg=CARD,
           activebackground=BORDER, bd=0, padx=5, pady=3,
           cursor="hand2").pack(side="right", padx=(0, 6))
-tk.Button(file_row, text="📚 라이브러리", command=lambda: fn_open_library(),
-          font=(FONT, 8), fg=TEXT, bg=CARD,
+tk.Button(file_row, text="라이브러리", command=lambda: fn_open_library(),
+          font=_font(8), fg=TEXT, bg=CARD,
           activebackground=BORDER, bd=0, padx=5, pady=3,
           cursor="hand2").pack(side="right", padx=(0, 6))
 
@@ -426,63 +464,48 @@ tk.Label(guide_body, text=GUIDE_TEXT, font=("Consolas", 8),
 def _toggle_guide():
     if _guide_open[0]:
         guide_body.pack_forget()
-        guide_toggle.config(text="ⓘ  마크다운 입력 형식 보기")
+        guide_toggle.config(text="마크다운 입력 형식 보기")
         _guide_open[0] = False
     else:
         guide_body.pack(fill="x", pady=(6, 0))
-        guide_toggle.config(text="ⓘ  마크다운 입력 형식 숨기기")
+        guide_toggle.config(text="마크다운 입력 형식 숨기기")
         _guide_open[0] = True
 
-guide_toggle = tk.Button(guide_wrap, text="ⓘ  마크다운 입력 형식 보기",
-          command=_toggle_guide, font=(FONT, 8), fg=ACCENT, bg=BG,
+guide_toggle = tk.Button(guide_wrap, text="마크다운 입력 형식 보기",
+          command=_toggle_guide, font=_font(8), fg=ACCENT, bg=BG,
           activebackground=BG, activeforeground=ACCENT, bd=0,
           padx=2, pady=1, cursor="hand2", anchor="w")
 guide_toggle.pack(fill="x")
 
-# 문항 번호
-num_row = tk.Frame(root, bg=BG, padx=10, pady=1)
-num_row.pack(fill="x")
+# 문항 번호 — UI 는 없앴다(사용자 결정 2026-07-19). 시험문제 변환이 여전히
+# 번호를 쓰므로 변수만 남겨 자동 증가한다. 초기화는 프로그램 재시작.
 num_use = tk.BooleanVar(value=True)
 num_var = tk.IntVar(value=1)
 
-def _toggle_num():
-    state = "normal" if num_use.get() else "disabled"
-    num_spin.config(state=state)
-    num_reset.config(state=state)
-
-tk.Checkbutton(num_row, text="문항 번호 사용", variable=num_use,
-               command=_toggle_num, font=(FONT, 8), fg=TEXT, bg=BG,
-               activebackground=BG, selectcolor=CARD,
-               cursor="hand2").pack(side="left", padx=(0,8))
-num_spin = tk.Spinbox(num_row, from_=1, to=100, textvariable=num_var,
-           width=3, font=(FONT, 9), justify="center",
-           relief="flat", bg=CARD, fg=TEXT, buttonbackground=CARD,
-           highlightbackground=BORDER, highlightthickness=1)
-num_spin.pack(side="left")
-num_reset = tk.Button(num_row, text="초기화", command=lambda: num_var.set(1),
-          font=(FONT, 8), fg=MUTED, bg=CARD, bd=0, padx=8, pady=3,
-          activebackground=BORDER, cursor="hand2")
-num_reset.pack(side="left", padx=(6,0))
-
-# 고정 버튼 2개: 마크다운 변환 / 기본 서식으로 변환 (+ 사진)
+# 변환 버튼(1/4 폭, 두 줄 높이) + 오른쪽은 '메인' 탭 버튼칸
+# — 사용자가 환경설정의 '메인' 탭에서 원하는 블럭을 채우는 영역.
 btn_area = tk.Frame(root, bg=BG, padx=10, pady=4)
 btn_area.pack(fill="x")
-tk.Button(btn_area, text="마크다운 변환  (Ctrl+T)",
-          command=fn_convert,
-          font=(FONT, 10, "bold"), fg="white", bg=ACCENT,
+top_row = tk.Frame(btn_area, bg=BG)
+top_row.pack(fill="x")
+tk.Button(top_row, text="마크다운 변환\n(Ctrl+T)",
+          command=fn_convert, width=12,
+          font=_font(9, "bold"), fg="white", bg=ACCENT,
           activebackground="#0077ed", activeforeground="white",
-          bd=0, pady=5, cursor="hand2").pack(fill="x")
+          bd=0, pady=6, cursor="hand2").pack(side="left", fill="y")
+quick_area = tk.Frame(top_row, bg=BG)
+quick_area.pack(side="left", fill="both", expand=True, padx=(6, 0))
 sub_btn = tk.Frame(btn_area, bg=BG)
 sub_btn.pack(fill="x", pady=(4, 0))
-tk.Button(sub_btn, text="↺ 기본 서식으로 변환", command=fn_reset_format,
-          font=(FONT, 8, "bold"), fg=TEXT, bg=YELLOW,
+tk.Button(sub_btn, text="기본 서식으로 변환", command=fn_reset_format,
+          font=_font(8, "bold"), fg=TEXT, bg=YELLOW,
           activebackground=BORDER, bd=0, pady=4,
           cursor="hand2").pack(side="left", fill="x", expand=True, padx=(0, 4))
-tk.Button(sub_btn, text="🖼 사진", command=fn_pick_photo,
-          font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
+tk.Button(sub_btn, text="사진", command=fn_pick_photo,
+          font=_font(8), fg=TEXT, bg=CARD, activebackground=BORDER,
           bd=1, padx=7, pady=4, cursor="hand2").pack(side="left")
-tk.Button(sub_btn, text="📝 양식 채우기", command=fn_open_form_fill,
-          font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
+tk.Button(sub_btn, text="양식 채우기", command=fn_open_form_fill,
+          font=_font(8), fg=TEXT, bg=CARD, activebackground=BORDER,
           bd=1, padx=7, pady=4, cursor="hand2").pack(side="left", padx=(4, 0))
 
 # ── 커스텀 팔레트 (탭 + 블럭) ──────────────────────────
@@ -502,55 +525,15 @@ def _select_pal_tab(i):
     render_palette()
 
 
-def render_palette():
-    for w in pal_tabbar.winfo_children():
-        w.destroy()
-    for w in pal_area.winfo_children():
-        w.destroy()
-
-    tabs = palette.load_tabs()
-    if not tabs:
-        tk.Label(pal_area, text="‘⚙ 환경설정’에서 탭과 블럭을 만들어보세요.",
-                 font=(FONT, 8), fg=MUTED, bg=BG).pack(anchor="w")
-        return
-    cur = _pal_state["tab"]
-    if cur >= len(tabs):
-        cur = _pal_state["tab"] = 0
-
-    # 탭 버튼들 + ⚙
-    for i, t in enumerate(tabs):
-        active = i == cur
-        tk.Button(pal_tabbar, text=t["name"], font=(FONT, 8, "bold"),
-                  bg=ACCENT if active else CARD, fg="white" if active else TEXT,
-                  bd=0, padx=7, pady=2, cursor="hand2",
-                  command=lambda idx=i: _select_pal_tab(idx)).pack(side="left", padx=(0, 3))
-    tk.Button(pal_tabbar, text="⚙", font=(FONT, 9),
-              command=lambda: fn_open_palette_settings(),
-              bg=CARD, fg=MUTED, bd=0, padx=6, pady=2,
-              cursor="hand2").pack(side="right")
-
-    # 블럭 그리드
-    tab = tabs[cur]
-    cols = tab.get("cols", 5)
+def _render_block_grid(parent, tab, avail_px):
+    """탭의 블럭들을 정사각형 격자로 그린다 (팔레트·메인 버튼칸 공용)."""
+    cols = max(1, int(tab.get("cols", palette.DEFAULT_COLS)))
     blocks = tab.get("blocks", [])
-    if not blocks:
-        tk.Label(pal_area, text="이 탭에 블럭이 없습니다. ⚙로 추가하세요.",
-                 font=(FONT, 8), fg=MUTED, bg=BG).pack(anchor="w")
-        return
-
-    # 칸 크기는 폭에 맞춰 정한다 — 칸 수가 늘면 칸이 작아져 빈 공간이 안 생긴다.
-    # winfo_width() 는 창이 화면에 올라오기 전에는 1 이라 쓸 수 없다(첫 렌더가
-    # mainloop 前에 일어난다). 위젯이 '요구하는' 폭은 그 전에도 정확하다.
-    avail = max(pal_area.winfo_width(),
-                root.winfo_reqwidth() - 2 * _PAL_PAD_PX,
-                _PAL_MIN_WIDTH_PX)
-    cell_px = _adaptive_cell_px(avail, cols)
-
-    grid = tk.Frame(pal_area, bg=BG)
+    cell_px = _adaptive_cell_px(avail_px, cols)
+    grid = tk.Frame(parent, bg=BG)
     grid.pack(anchor="w")
     for i in range(cols):
-        grid.columnconfigure(i, minsize=cell_px + _BLOCK_GAP_PX, weight=0,
-                             uniform="pal")
+        grid.columnconfigure(i, minsize=cell_px + _BLOCK_GAP_PX, weight=0)
     for blk in blocks:
         span = max(1, min(int(blk.get("span", 1)), cols))
         rows = max(1, int(blk.get("rows", 1)))
@@ -566,21 +549,78 @@ def render_palette():
         _make_block_button(cell, blk, span).pack(fill="both", expand=True)
 
 
+def render_palette():
+    for w in pal_tabbar.winfo_children():
+        w.destroy()
+    for w in pal_area.winfo_children():
+        w.destroy()
+    for w in quick_area.winfo_children():
+        w.destroy()
+
+    all_tabs = palette.load_tabs()
+    # '메인' 탭은 변환 버튼 옆 버튼칸으로 그려진다 — 탭 줄에는 안 나온다
+    main_tab = next((t for t in all_tabs
+                     if t.get("name") == palette.MAIN_TAB), None)
+    tabs = [t for t in all_tabs if t.get("name") != palette.MAIN_TAB]
+
+    # 창 폭 추정 (winfo_width 는 mainloop 전엔 1 — 요청 폭을 쓴다)
+    win_w = max(root.winfo_width(), root.winfo_reqwidth(), _PAL_MIN_WIDTH_PX)
+
+    if main_tab is not None:
+        if main_tab.get("blocks"):
+            _render_block_grid(quick_area, main_tab,
+                               win_w - int(120 * SCALE))   # 변환 버튼 몫 제외
+        else:
+            tk.Label(quick_area,
+                     text="환경설정의 '메인' 탭에서\n이 자리의 버튼을 채울 수 있습니다",
+                     font=_font(8), fg=MUTED, bg=BG,
+                     justify="left").pack(anchor="w", padx=4)
+
+    if not tabs:
+        tk.Label(pal_area, text="‘환경설정’에서 탭과 블럭을 만들어보세요.",
+                 font=_font(8), fg=MUTED, bg=BG).pack(anchor="w")
+        return
+    cur = _pal_state["tab"]
+    if cur >= len(tabs):
+        cur = _pal_state["tab"] = 0
+
+    # 탭 버튼들 + 설정
+    for i, t in enumerate(tabs):
+        active = i == cur
+        tk.Button(pal_tabbar, text=t["name"], font=_font(8, "bold"),
+                  bg=ACCENT if active else CARD, fg="white" if active else TEXT,
+                  bd=0, padx=7, pady=2, cursor="hand2",
+                  command=lambda idx=i: _select_pal_tab(idx)).pack(side="left", padx=(0, 3))
+    tk.Button(pal_tabbar, text="설정", font=_font(9),
+              command=lambda: fn_open_palette_settings(),
+              bg=CARD, fg=MUTED, bd=0, padx=6, pady=2,
+              cursor="hand2").pack(side="right")
+
+    tab = tabs[cur]
+    if not tab.get("blocks"):
+        tk.Label(pal_area, text="이 탭에 블럭이 없습니다. ‘설정’으로 추가하세요.",
+                 font=_font(8), fg=MUTED, bg=BG).pack(anchor="w")
+    else:
+        _render_block_grid(pal_area, tab, win_w - 2 * _PAL_PAD_PX)
+
+    # 창 크기를 내용(격자 끝)에 맞춘다 — 칸 수를 바꾸면 창도 따라 변한다
+    root.after_idle(lambda: root.geometry(""))
+
+
 # 블럭 종류별 배경색·기호 — 환경설정 미리보기(palette_ui._make_tile/_tile_text)와
 # 반드시 같아야 한다. 'form'이 여기에만 빠져 있어서, 양식 블럭이 환경설정에서는
 # 📄+연녹색인데 메인 팔레트에서는 ƒ+흰 배경으로 보였다.
 # type "function"은 UI에서 '서식 조합'으로 부른다 (개선안 10 — 저장 키는 그대로).
 _BLOCK_COLOR = {"char": CARD, "template": "#eef4ff",
                 "function": "#fff4e6", "form": "#eafaf1"}
-_BLOCK_PREFIX = {"template": "▦ ", "function": "ƒ ", "form": "📄 "}
 
 # 팔레트 한 칸의 한 변(px). 칸은 정사각형이고, **칸 수에 맞춰 크기가 변한다** —
 # 고정 크기로 두면 칸 수가 적을 때 오른쪽에 빈 공간이 크게 남는다.
-_BLOCK_CELL_MAX_PX = 34     # 칸 수가 적어도 이보다 크게는 안 키운다
+_BLOCK_CELL_MAX_PX = 34   # SCALE 적용 전 기준값     # 칸 수가 적어도 이보다 크게는 안 키운다
 _BLOCK_CELL_MIN_PX = 16     # 칸 수가 많아도 이보다 작아지면 못 누른다
 _BLOCK_GAP_PX = 2
 _PAL_PAD_PX = 10            # 팔레트 좌우 여백 (pal_area 의 padx 와 같아야 한다)
-_PAL_MIN_WIDTH_PX = 380     # 폭을 아직 모를 때 쓸 하한
+_PAL_MIN_WIDTH_PX = int(380 * SCALE)   # 폭을 아직 모를 때 쓸 하한
 
 
 def _adaptive_cell_px(avail_px, cols):
@@ -588,7 +628,8 @@ def _adaptive_cell_px(avail_px, cols):
     if cols <= 0:
         return _BLOCK_CELL_MAX_PX
     size = (avail_px - _BLOCK_GAP_PX * cols) // cols
-    return max(_BLOCK_CELL_MIN_PX, min(_BLOCK_CELL_MAX_PX, size))
+    return max(int(_BLOCK_CELL_MIN_PX * SCALE),
+               min(int(_BLOCK_CELL_MAX_PX * SCALE), size))
 
 
 def _block_label_max(span):
@@ -600,7 +641,7 @@ def _block_label_max(span):
     26px 칸에 9pt 한글이 대략 1.7자 들어가므로 칸당 2자로 잡는다. 이름이 길면
     환경설정에서 그 블럭의 칸 수를 늘리는 게 정답이다.
     """
-    return 2 if span <= 1 else span * 2
+    return max(2, span * 2)
 
 
 def _block_label(blk):
@@ -633,7 +674,7 @@ def _add_tooltip(widget, text):
                         f"+{widget.winfo_rooty() + widget.winfo_height() + 4}")
         # 메인 창이 topmost라 말풍선도 올려주지 않으면 뒤로 숨는다
         win.attributes("-topmost", True)
-        tk.Label(win, text=text, font=(FONT, 8), fg=TEXT, bg="#ffffe0",
+        tk.Label(win, text=text, font=_font(8), fg=TEXT, bg="#ffffe0",
                  bd=1, relief="solid", padx=6, pady=3).pack()
         tip["win"] = win
 
@@ -650,19 +691,15 @@ def _add_tooltip(widget, text):
 
 
 def _make_block_button(parent, blk, span=1):
-    btype = blk.get("type")
-    name = _block_label(blk)
-    if span <= 1 and btype != "char":
-        # 1칸에는 기호와 이름을 같이 못 넣는다. 종류는 배경색으로 이미 구분되므로
-        # 기호(▦ ƒ 📄)를 버리고 이름을 살린다 — 'ƒ …' 보다 '굵게' 가 쓸모 있다.
-        full, limit = name, 2
-    else:
-        full, limit = _BLOCK_PREFIX.get(btype, "") + name, _block_label_max(span)
+    # 자동 아이콘(▦ ƒ 📄)은 넣지 않는다 — 사용자가 정한 이름 그대로.
+    # 종류 구분은 배경색이 하고, 색은 사용자가 지정할 수도 있다(blk["color"]).
+    full = _block_label(blk)
+    limit = _block_label_max(span)
     label = full if len(full) <= limit else full[:limit] + "…"
     btn = tk.Button(parent, text=label,
                     command=lambda b=blk: run_palette_block(b),
-                    font=(FONT, 9), fg=TEXT,
-                    bg=_BLOCK_COLOR.get(blk.get("type"), CARD),
+                    font=_font(9), fg=TEXT,
+                    bg=blk.get("color") or _BLOCK_COLOR.get(blk.get("type"), CARD),
                     activebackground=BORDER, bd=1, relief="solid", pady=0,
                     cursor="hand2")
     if label != full:
@@ -675,9 +712,12 @@ render_palette()
 # 상태 표시 + 버전/날짜 (CLAUDE.md 규칙: 하단 필수 표기)
 status_var = tk.StringVar(value=f"양식: {settings.get_active_name()}")
 tk.Label(root, textvariable=status_var,
-         font=(FONT, 8), fg=MUTED, bg=BG).pack(pady=(6, 0))
+         font=_font(8), fg=MUTED, bg=BG).pack(pady=(6, 0))
 tk.Label(root, text=f"v{VERSION} · {RELEASE_DATE}",
-         font=(FONT, 7), fg=MUTED, bg=BG).pack(pady=(0, 10))
+         font=_font(7), fg=MUTED, bg=BG).pack(pady=(0, 2))
+# 저작자 표기 — 자유 소프트웨어(AGPL-3.0). 전문은 저장소의 LICENSE 파일.
+tk.Label(root, text="만든이 박승연 · © 2026 · 자유 소프트웨어 (AGPL-3.0)",
+         font=_font(7), fg=MUTED, bg=BG).pack(pady=(0, 8))
 
 # 단축키: Ctrl+T = 마크다운 변환
 root.bind_all("<Control-t>", lambda e: fn_convert())

@@ -270,7 +270,7 @@ class SettingsWindow(tk.Toplevel):
         tk.Frame(self, bg=BORDER, height=1).pack(fill="x", padx=16, pady=(8, 0))
         foot = tk.Frame(self, bg=BG, padx=16, pady=10)
         foot.pack(fill="x")
-        tk.Button(foot, text="⚙ 기본 서식 설정", command=self._edit_default_format,
+        tk.Button(foot, text="기본 서식 설정", command=self._edit_default_format,
                   font=(FONT, 9), bg=CARD, fg=TEXT, bd=1, padx=10, pady=5,
                   cursor="hand2").pack(side="left")
         tk.Button(foot, text="닫기", command=self._close, font=(FONT, 10, "bold"),
@@ -312,6 +312,11 @@ class SettingsWindow(tk.Toplevel):
         tabs = palette.load_tabs()
         if not tabs:
             return
+        if tabs[self.sel_tab].get("name") == palette.MAIN_TAB:
+            messagebox.showinfo("이름 고정",
+                "'메인' 탭 이름은 메인 창이 찾는 열쇠라 바꿀 수 없습니다.",
+                parent=self)
+            return
         cur = tabs[self.sel_tab]["name"]
         name = simpledialog.askstring("이름 변경", "새 이름:", initialvalue=cur, parent=self)
         if name:
@@ -326,6 +331,12 @@ class SettingsWindow(tk.Toplevel):
     def _del_tab(self):
         tabs = palette.load_tabs()
         if not tabs:
+            return
+        if tabs[self.sel_tab].get("name") == palette.MAIN_TAB:
+            messagebox.showinfo(
+                "삭제할 수 없음",
+                "'메인' 탭은 메인 창의 변환 버튼 옆 버튼칸입니다.\n"
+                "탭 자체는 지울 수 없고, 안의 블럭만 비울 수 있습니다.", parent=self)
             return
         if messagebox.askyesno("삭제", f"'{tabs[self.sel_tab]['name']}' 탭을 삭제할까요?",
                                parent=self):
@@ -357,23 +368,9 @@ class SettingsWindow(tk.Toplevel):
             text=f"'{tab['name']}'  ·  블럭 {len(blocks)}개  ·  "
                  f"빈칸을 끌어 칸 수를 정하면 새 블럭, 타일을 끌면 자리 이동")
 
-        # 상단 바: 칸 수 + 선택 블럭 동작
-        bar = tk.Frame(self.block_area, bg=BG)
-        bar.pack(fill="x", pady=(0, 6))
-        tk.Label(bar, text="칸 수", font=(FONT, 8), bg=BG, fg=MUTED).pack(side="left")
-        self._cols_var = tk.IntVar(value=cols)
-        tk.Spinbox(bar, from_=1, to=10, width=3, textvariable=self._cols_var,
-                   command=self._apply_cols, font=(FONT, 9)).pack(side="left", padx=(4, 14))
-        tk.Button(bar, text="✎ 편집", font=(FONT, 8), bg=CARD, bd=1, padx=8, pady=2,
-                  cursor="hand2", command=self._edit_selected).pack(side="left", padx=2)
-        # 선택 블럭 크기 조절 — 가로/세로를 자유롭게
-        for txt, ds, dr in (("↔＋", 1, 0), ("↔－", -1, 0), ("↕＋", 0, 1), ("↕－", 0, -1)):
-            tk.Button(bar, text=txt, font=(FONT, 8), bg=CARD, bd=1, padx=6, pady=2,
-                      cursor="hand2",
-                      command=lambda a=ds, b=dr: self._resize_selected(a, b)
-                      ).pack(side="left", padx=1)
-        tk.Button(bar, text="삭제", font=(FONT, 8), bg="#e8e8ed", bd=0, padx=8, pady=2,
-                  cursor="hand2", command=self._del_selected).pack(side="left", padx=2)
+        # 옛 상단 바(칸수 스핀박스·편집·크기·삭제)는 없앴다 (2026-07-19):
+        #  - 칸수 스핀박스는 to=10 이라 ＋칸 버튼과 싸우며 칸 수를 되돌렸다(버그)
+        #  - 편집은 더블클릭, 나머지는 타일 우클릭 메뉴로 옮김 — 화면이 한 줄 준다
 
         if not blocks:
             # 빈 격자라도 그린다 — 거기를 끌어 첫 블럭을 만들어야 하므로
@@ -383,11 +380,31 @@ class SettingsWindow(tk.Toplevel):
                      justify="left").pack(anchor="w", pady=(0, 4))
 
         # 격자는 스크롤 없이 그대로 편다 — 줄이 늘면 창 자체가 커진다(_fit_window).
-        wrap = tk.Frame(self.block_area, bg=CARD, highlightbackground=BORDER,
+        # 배치: 격자 오른쪽에 칸(가로) 버튼, 아래에 줄(세로) 버튼 — 방향과 위치를 맞춤
+        outer = tk.Frame(self.block_area, bg=BG)
+        outer.pack(anchor="w", pady=(2, 0))
+        wrap = tk.Frame(outer, bg=CARD, highlightbackground=BORDER,
                         highlightthickness=1)
-        wrap.pack(anchor="w", pady=(2, 0))
+        wrap.grid(row=0, column=0, sticky="nw")
         grid = tk.Frame(wrap, bg=CARD, padx=2, pady=2)
         grid.pack(anchor="w")
+
+        colbar = tk.Frame(outer, bg=BG)          # 오른쪽: 칸(가로 방향) 조절
+        colbar.grid(row=0, column=1, sticky="n", padx=(4, 0))
+        for txt, cmd in (("＋ 칸", self._add_col), ("－ 칸", self._remove_col)):
+            tk.Button(colbar, text=txt, command=cmd, font=(FONT, 8),
+                      bg=CARD, fg=TEXT, bd=1, padx=6, pady=3,
+                      cursor="hand2").pack(pady=(0, 3))
+
+        rowbar = tk.Frame(outer, bg=BG)          # 아래: 줄(세로 방향) 조절
+        rowbar.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        for txt, cmd in (("＋ 줄", self._add_row), ("－ 줄", self._remove_row)):
+            tk.Button(rowbar, text=txt, command=cmd, font=(FONT, 8),
+                      bg=CARD, fg=TEXT, bd=1, padx=8, pady=3,
+                      cursor="hand2").pack(side="left", padx=(0, 3))
+        tk.Label(rowbar,
+                 text=f"가로 {cols}칸 · 칸 {self._cell_px(cols)}px",
+                 font=(FONT, 8), bg=BG, fg=MUTED).pack(side="left", padx=(8, 0))
 
         # 칸 크기는 칸 수에 맞춰 정한다 (메인 창과 같은 규칙 — 미리보기가 실물과 맞게)
         cell_px = self._cell_px(cols)
@@ -419,24 +436,14 @@ class SettingsWindow(tk.Toplevel):
                 if (rr, cc) not in self._used_cells:
                     self._make_empty_cell(grid, rr, cc, cell_px)
 
-        # 줄/칸 늘리기 — 누르면 격자가 늘고 창도 그만큼 커진다
-        rowbar = tk.Frame(self.block_area, bg=BG)
-        rowbar.pack(anchor="w", pady=(6, 0))
-        for txt, cmd in (("＋ 줄", self._add_row), ("－ 줄", self._remove_row),
-                         ("＋ 칸", self._add_col), ("－ 칸", self._remove_col)):
-            tk.Button(rowbar, text=txt, command=cmd, font=(FONT, 8),
-                      bg=CARD, fg=TEXT, bd=1, padx=8, pady=3,
-                      cursor="hand2").pack(side="left", padx=(0, 3))
-        tk.Label(rowbar,
-                 text=f"가로 {cols}칸 · 칸 {cell_px}px — 칸을 늘리면 칸 크기가 작아집니다",
-                 font=(FONT, 8), bg=BG, fg=MUTED).pack(side="left", padx=(8, 0))
+        # 드래그 좌표 계산용 (winfo_containing 없이 수학으로 — 부드러운 이유)
+        self._grid_widget = grid
+        self._grid_cell_px = cell_px
+        self._grid_total_rows = total_rows
+        self._grid_cols = cols
+        grid.bind("<B1-Motion>", self._empty_motion)
 
         self.after_idle(self._fit_window)
-
-    def _apply_cols(self):
-        palette.set_tab_cols(self.sel_tab, self._cols_var.get())
-        self._render_blocks()
-        self._notify()
 
     # ── 줄/칸 늘리기·줄이기 + 창 크기 맞추기 ──
     def _cell_px(self, cols):
@@ -477,7 +484,7 @@ class SettingsWindow(tk.Toplevel):
         return palette.load_tabs()[self.sel_tab].get("cols", palette.DEFAULT_COLS)
 
     def _set_cols(self, cols):
-        palette.set_tab_cols(self.sel_tab, max(1, cols))
+        palette.set_tab_cols(self.sel_tab, max(1, min(30, cols)))
         self._render_blocks()
         self._notify()
 
@@ -516,12 +523,28 @@ class SettingsWindow(tk.Toplevel):
         self._new_from = self._new_to = rc
         self._paint_range()
 
+    def _xy_to_cell(self, x_root, y_root):
+        """화면 좌표 → 격자 칸 (row, col). 격자 밖이면 None.
+
+        winfo_containing 은 호출마다 창 시스템을 왕복해서, 드래그 중 매 픽셀마다
+        부르면 눈에 띄게 버벅였다(실측). 격자 원점과 칸 크기로 나눗셈 한 번이면
+        되므로 이렇게 계산한다 — 이것이 드래그가 부드러워진 이유다.
+        """
+        g = getattr(self, "_grid_widget", None)
+        if g is None or not g.winfo_exists():
+            return None
+        px = self._grid_cell_px + CELL_GAP
+        c = (x_root - g.winfo_rootx() - 2) // px
+        r = (y_root - g.winfo_rooty() - 2) // px
+        if 0 <= c < self._grid_cols and 0 <= r < self._grid_total_rows:
+            return (int(r), int(c))
+        return None
+
     def _empty_motion(self, e):
         if self._new_from is None:
             return
-        w = e.widget.winfo_containing(e.x_root, e.y_root)
-        rc = self._empty_map.get(str(w))
-        if rc:                          # 가로·세로 모두 늘릴 수 있다
+        rc = self._xy_to_cell(e.x_root, e.y_root)
+        if rc and rc != self._new_to:   # 칸이 바뀔 때만 다시 칠한다
             self._new_to = rc
             self._paint_range()
 
@@ -569,6 +592,7 @@ class SettingsWindow(tk.Toplevel):
         dlg = _ToolPickDialog(self, span, rows)
         self.wait_window(dlg)
         self._pending_area = (row, col, span, rows)
+        self._pending_color = getattr(dlg, "color", None)
         if dlg.result == "char":
             self._add_char(span, rows)
         elif dlg.result == "template":
@@ -578,10 +602,14 @@ class SettingsWindow(tk.Toplevel):
         elif dlg.result == "form":
             self._add_form(span, rows)
         self._pending_area = None
+        self._pending_color = None
 
     def _place(self, block):
         """새 블럭을 지금 지정한 자리에 넣는다 (없으면 첫 빈자리)."""
         area = getattr(self, "_pending_area", None)
+        color = getattr(self, "_pending_color", None)
+        if color:
+            block["color"] = color
         if area:
             row, col, span, rows = area
             block["span"], block["rows"] = span, rows
@@ -593,8 +621,10 @@ class SettingsWindow(tk.Toplevel):
 
     def _make_tile(self, parent, i, blk, span=1):
         selected = (self.sel_block == i)
-        bg = {"char": CARD, "template": "#eef4ff", "function": "#fff4e6",
-              "form": "#eafaf1"}.get(blk["type"], CARD)
+        # 사용자 지정 색이 우선, 없으면 종류별 기본색 (메인 창과 같은 규칙)
+        bg = blk.get("color") or {"char": CARD, "template": "#eef4ff",
+                                  "function": "#fff4e6",
+                                  "form": "#eafaf1"}.get(blk["type"], CARD)
         tile = tk.Frame(parent, bg=bg,
                         highlightbackground=ACCENT if selected else BORDER,
                         highlightthickness=2 if selected else 1)
@@ -609,19 +639,49 @@ class SettingsWindow(tk.Toplevel):
             w.bind("<B1-Motion>", self._on_drag)
             w.bind("<ButtonRelease-1>", self._on_release)
             w.bind("<Double-Button-1>", lambda e, idx=i: self._edit_block(idx))
+            w.bind("<Button-3>", lambda e, idx=i: self._tile_menu(e, idx))
             w.config(cursor="hand2")
         return tile
 
-    def _tile_text(self, blk, span=1):
-        """칸 수에 맞춰 자른다 — 메인 창(main._make_block_button)과 같은 규칙."""
-        name = self._block_label(blk)
-        if span <= 1 and blk["type"] != "char":
-            # 1칸엔 기호를 버리고 이름을 살린다 (종류는 배경색으로 구분)
-            s, limit = name, 2
+    def _tile_menu(self, e, idx):
+        """타일 우클릭 메뉴 — 옛 상단 바(편집·크기·삭제)를 여기로 옮겼다."""
+        self._set_selection(idx)
+        m = tk.Menu(self, tearoff=0)
+        m.add_command(label="편집  (더블클릭)", command=lambda: self._edit_block(idx))
+        m.add_command(label="색 바꾸기", command=lambda: self._recolor(idx))
+        m.add_command(label="기본색으로", command=lambda: self._recolor(idx, reset=True))
+        m.add_separator()
+        m.add_command(label="가로 +1", command=lambda: self._resize_selected(1, 0))
+        m.add_command(label="가로 -1", command=lambda: self._resize_selected(-1, 0))
+        m.add_command(label="세로 +1", command=lambda: self._resize_selected(0, 1))
+        m.add_command(label="세로 -1", command=lambda: self._resize_selected(0, -1))
+        m.add_separator()
+        m.add_command(label="삭제", command=self._del_selected)
+        m.tk_popup(e.x_root, e.y_root)
+
+    def _recolor(self, idx, reset=False):
+        """블럭 배경색을 바꾸거나(색 선택) 종류 기본색으로 되돌린다."""
+        blocks = palette.load_tabs()[self.sel_tab]["blocks"]
+        blk = dict(blocks[idx])
+        if reset:
+            blk.pop("color", None)
         else:
-            pre = {"template": "▦ ", "function": "ƒ ", "form": "📄 "}.get(
-                blk["type"], "")
-            s, limit = pre + name, 2 if span <= 1 else span * 2
+            _, hexv = colorchooser.askcolor(
+                parent=self, initialcolor=blk.get("color") or "#ffffff")
+            if not hexv:
+                return
+            blk["color"] = hexv
+        palette.update_block(self.sel_tab, idx, blk)
+        self._render_blocks()
+        self._notify()
+
+    def _tile_text(self, blk, span=1):
+        """칸 수에 맞춰 자른다 — 메인 창(main._make_block_button)과 같은 규칙.
+
+        자동 아이콘(▦ ƒ 📄)은 넣지 않는다 — 사용자가 정한 이름 그대로 (2026-07-19).
+        """
+        s = self._block_label(blk)
+        limit = max(2, span * 2)
         return s if len(s) <= limit else s[:limit] + "…"
 
     def _block_label(self, blk):
@@ -660,18 +720,30 @@ class SettingsWindow(tk.Toplevel):
         self._drag_from = idx
         self._set_selection(idx)
 
+    def _cell_owner(self, rc):
+        """그 칸을 차지한 블럭 index. 빈칸이면 None."""
+        if rc is None:
+            return None
+        blocks = palette.load_tabs()[self.sel_tab]["blocks"]
+        r, c = rc
+        for i, b in enumerate(blocks):
+            r0, c0 = int(b.get("row", 0)), int(b.get("col", 0))
+            if (r0 <= r < r0 + max(1, int(b.get("rows", 1)))
+                    and c0 <= c < c0 + max(1, int(b.get("span", 1)))):
+                return i
+        return None
+
     def _on_drag(self, e):
-        """드래그 중 — 지금 놓으면 어디로 갈지 타일에 표시."""
+        """드래그 중 — 지금 놓으면 어디로 갈지 표시. 좌표 수학이라 부드럽다."""
         if self._drag_from is None:
             return
-        under = self.winfo_containing(e.x_root, e.y_root)
-        target = self._widget_to_index(under)
-        if target is None and self._is_empty_cell(under):
-            target = -1                      # 빈칸에 놓으면 맨 뒤로
-        if target == self._drop_hint:
-            return
-        self._drop_hint = target
-        # 후보 타일만 강조 (원본은 선택색 유지)
+        rc = self._xy_to_cell(e.x_root, e.y_root)
+        target = self._cell_owner(rc)
+        hint = target if target is not None else rc
+        if hint == self._drop_hint:
+            return                       # 같은 칸이면 다시 그리지 않는다 (버벅임 방지)
+        self._drop_hint = hint
+        # 타일 강조
         for i, tile in getattr(self, "_tiles", {}).items():
             try:
                 if i == target and i != self._drag_from:
@@ -682,7 +754,14 @@ class SettingsWindow(tk.Toplevel):
                     tile.config(highlightbackground=BORDER, highlightthickness=1)
             except Exception:
                 pass
-        # 빈칸은 강조하지 않는다 — 어디에 놓든 "맨 뒤"라 표시가 오히려 헷갈린다
+        # 빈칸 강조 — 놓일 자리를 칠해 보여준다
+        for key, cell_rc in self._empty_map.items():
+            try:
+                w = self.nametowidget(key)
+                w.config(bg=RANGE_BG if (target is None and cell_rc == rc)
+                         else EMPTY_BG)
+            except Exception:
+                pass
 
     def _on_release(self, e):
         src = self._drag_from
@@ -690,65 +769,27 @@ class SettingsWindow(tk.Toplevel):
         self._drop_hint = None
         if src is None:
             return
-        under = self.winfo_containing(e.x_root, e.y_root)
-        # ① 빈칸에 놓으면 그 자리로 옮긴다 (좌표 방식이라 원하는 칸에 정확히 놓인다)
-        rc = self._cell_under(under)
-        if rc is not None:
+        rc = self._xy_to_cell(e.x_root, e.y_root)
+        target = self._cell_owner(rc)
+        if target is None and rc is not None:
+            # 빈칸에 놓으면 그 자리로 옮긴다
             blocks = palette.load_tabs()[self.sel_tab]["blocks"]
             b = blocks[src]
-            moved = palette.set_block_area(
-                self.sel_tab, src, rc[0], rc[1],
-                int(b.get("span", 1)), int(b.get("rows", 1)))
-            if moved:
+            if palette.set_block_area(self.sel_tab, src, rc[0], rc[1],
+                                      int(b.get("span", 1)),
+                                      int(b.get("rows", 1))):
                 self._render_blocks()
                 self._notify()
+            else:
+                self._render_blocks()    # 겹쳐서 실패 — 강조만 지운다
             return
-        # ② 다른 타일에 놓으면 목록 순서를 바꾼다 (기존 동작)
-        target = self._widget_to_index(under)
         if target is not None and target != src:
             palette.move_block_to(self.sel_tab, src, target)
             self.sel_block = target
             self._render_blocks()
             self._notify()
-
-    def _cell_under(self, widget):
-        """그 위젯이 빈칸이면 (row, col), 아니면 None."""
-        w = widget
-        for _ in range(4):
-            if w is None:
-                return None
-            rc = getattr(self, "_empty_map", {}).get(str(w))
-            if rc is not None:
-                return rc
-            w = getattr(w, "master", None)
-        return None
-
-    def _is_empty_cell(self, widget):
-        """그 위젯이 빈칸인가 (타일을 여기 놓으면 맨 뒤로 보낸다)."""
-        w = widget
-        for _ in range(4):
-            if w is None:
-                return False
-            if str(w) in getattr(self, "_empty_map", {}):
-                return True
-            w = getattr(w, "master", None)
-        return False
-
-    def _widget_to_index(self, w):
-        seen = 0
-        while w is not None and seen < 6:
-            key = str(w)
-            if key in self._tile_map:
-                return self._tile_map[key]
-            parent = w.winfo_parent()
-            if not parent:
-                break
-            try:
-                w = w.nametowidget(parent)
-            except Exception:
-                break
-            seen += 1
-        return None
+        else:
+            self._render_blocks()        # 제자리 — 강조 원복
 
     # ── 선택 블럭 동작 ──
     def _need_sel(self):
@@ -1128,6 +1169,26 @@ class _ToolPickDialog(tk.Toplevel):
                             command=lambda k=key: self._pick(k))
             row.pack(fill="x", pady=2)
 
+        # 버튼 색 — 기본(종류별 색) 또는 직접 지정
+        self.color = None
+        crow = tk.Frame(self, bg=BG, padx=16)
+        crow.pack(fill="x", pady=(6, 0))
+        tk.Label(crow, text="버튼 색", font=(FONT, 8), bg=BG,
+                 fg=MUTED).pack(side="left", padx=(0, 6))
+        self._color_lbl = tk.Label(crow, text="기본", font=(FONT, 8),
+                                   bg=CARD, fg=TEXT, relief="solid", bd=1,
+                                   padx=8, pady=2)
+        self._color_lbl.pack(side="left")
+        for hexv in ("#ffffff", "#eef4ff", "#fff4e6", "#eafaf1",
+                     "#fdecec", "#f3ecfd", "#fdf7dc"):
+            sw = tk.Label(crow, text="  ", bg=hexv, relief="solid", bd=1)
+            sw.pack(side="left", padx=2)
+            sw.bind("<Button-1>", lambda e, v=hexv: self._set_color(v))
+            sw.config(cursor="hand2")
+        tk.Button(crow, text="직접", font=(FONT, 8), bg=CARD, bd=1,
+                  padx=6, pady=1, cursor="hand2",
+                  command=self._custom_color).pack(side="left", padx=(4, 0))
+
         tk.Button(self, text="취소", command=self.destroy, font=(FONT, 9),
                   bg="#e8e8ed", fg=TEXT, bd=0, padx=14, pady=5,
                   cursor="hand2").pack(anchor="e", padx=16, pady=12)
@@ -1135,6 +1196,16 @@ class _ToolPickDialog(tk.Toplevel):
         self.update_idletasks()
         self.geometry(f"+{master.winfo_rootx()+60}+{master.winfo_rooty()+80}")
         self.grab_set()
+
+    def _set_color(self, hexv):
+        self.color = hexv
+        self._color_lbl.config(text=hexv or "기본",
+                               bg=hexv or CARD)
+
+    def _custom_color(self):
+        _, hexv = colorchooser.askcolor(parent=self)
+        if hexv:
+            self._set_color(hexv)
 
     def _pick(self, key):
         self.result = key

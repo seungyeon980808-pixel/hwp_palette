@@ -167,7 +167,7 @@ class SettingsWindow(tk.Toplevel):
                 groups[group] = [lf, 0]
                 # 보기박스 그룹 상단에 '시각 편집' 진입 버튼
                 if group == "보기박스":
-                    tk.Button(lf, text="🖼 도식 보며 편집",
+                    tk.Button(lf, text="도식 보며 편집",
                               command=self._open_bogi_visual,
                               font=("맑은 고딕", 9, "bold"), bg="#0071e3", fg="white",
                               bd=0, padx=10, pady=4, cursor="hand2").grid(

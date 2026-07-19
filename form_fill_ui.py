@@ -49,7 +49,7 @@ class FormFillWindow(tk.Toplevel):
         # ── 파일 고르기 ──
         pick = tk.Frame(self, bg=BG, padx=16, pady=8)
         pick.pack(fill="x")
-        tk.Button(pick, text="📂 양식 파일 고르기", command=self._pick,
+        tk.Button(pick, text="양식 파일 고르기", command=self._pick,
                   font=(FONT, 9), fg=TEXT, bg=CARD, activebackground=BORDER,
                   bd=1, padx=10, pady=5, cursor="hand2").pack(side="left")
         self.file_lbl = tk.Label(pick, text="(선택 안 됨)", font=(FONT, 9),

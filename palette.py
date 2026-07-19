@@ -35,6 +35,9 @@ DEFAULT_COLS = 15       # 격자 가로 칸 수. 칸 크기는 폭에 맞춰 정
 # 만들 수 없었다(줄을 건너뛰는 개념이 없으므로). 2026-07-19 좌표 방식으로 전환.
 BLOCK_POS_KEYS = ("row", "col", "span", "rows")
 
+# 메인 창 상단(변환 버튼 옆)에 그려지는 특수 탭. 팔레트 탭 줄에는 안 나온다.
+MAIN_TAB = "메인"
+
 DEFAULT_FORMAT = {
     "font": "함초롬바탕",
     "size_pt": 10.0,
@@ -61,6 +64,10 @@ def load_tabs():
         save_tabs(tabs)
     # 하위호환 기본값
     migrated = False
+    if not any(t.get("name") == MAIN_TAB for t in tabs):
+        # 메인 버튼칸 탭 — 변환 버튼 옆 영역. 환경설정에서 다른 탭처럼 편집한다.
+        tabs.append({"name": MAIN_TAB, "cols": 8, "blocks": []})
+        migrated = True
     for t in tabs:
         t.setdefault("cols", DEFAULT_COLS)
         t.setdefault("blocks", [])

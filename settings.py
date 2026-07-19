@@ -258,6 +258,7 @@ CONFIG_KEY_OWNERS = {
     "active_profile": "settings",
     "quick_buttons": "settings",
     "photo_dir": "settings",
+    "ui_scale": "settings",
     "palette_tabs": "palette",
     "default_format": "palette",
 }
@@ -271,6 +272,19 @@ def get_photo_dir():
 
 def set_photo_dir(path):
     set_config_value("photo_dir", (path or "").strip())
+
+
+# ── 화면 크기 모드 (작게 1.0 / 크게 1.3) ────────────────
+def get_ui_scale():
+    try:
+        v = float(get_config_value("ui_scale", 1.0))
+    except (TypeError, ValueError):
+        v = 1.0
+    return 1.3 if v > 1.15 else 1.0     # 두 단계만 — 중간값은 반올림
+
+
+def set_ui_scale(v):
+    set_config_value("ui_scale", 1.3 if float(v) > 1.15 else 1.0)
 
 
 def get_config_value(key, default=None):

@@ -404,17 +404,17 @@ class LibraryManager(tk.Toplevel):
         # 공유 — 항목 단위로 동료와 주고받기 (개선안 30)
         share_row = tk.Frame(self, bg=BG, padx=16)
         share_row.pack(fill="x", pady=(6, 0))
-        tk.Button(share_row, text="⬆ 이 탭 내보내기", command=self._export_tab,
+        tk.Button(share_row, text="이 탭 내보내기", command=self._export_tab,
                   font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
                   bd=1, padx=8, pady=4, cursor="hand2").pack(side="left")
-        tk.Button(share_row, text="⬇ 가져오기", command=self._import_archive,
+        tk.Button(share_row, text="가져오기", command=self._import_archive,
                   font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
                   bd=1, padx=8, pady=4, cursor="hand2").pack(side="left", padx=(6, 0))
 
         # 사진 폴더 — \사진이름\ 으로 그림을 부르는 폴더 (등록 없이 파일 이름으로)
         photo_row = tk.Frame(self, bg=BG, padx=16)
         photo_row.pack(fill="x", pady=(6, 0))
-        tk.Button(photo_row, text="🖼 사진 폴더", command=self._pick_photo_dir,
+        tk.Button(photo_row, text="사진 폴더", command=self._pick_photo_dir,
                   font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
                   bd=1, padx=8, pady=4, cursor="hand2").pack(side="left")
         self.photo_dir_lbl = tk.Label(photo_row, font=(FONT, 8), bg=BG, fg=MUTED,
