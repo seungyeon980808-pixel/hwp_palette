@@ -270,6 +270,14 @@ class SettingsWindow(tk.Toplevel):
         tk.Frame(self, bg=BORDER, height=1).pack(fill="x", padx=16, pady=(8, 0))
         foot = tk.Frame(self, bg=BG, padx=16, pady=10)
         foot.pack(fill="x")
+        # 실행 취소 / 다시 실행 (UI 제안 1) — 잘못 지운 블럭을 되살린다
+        self.bind_all("<Control-z>", lambda e: self._undo())
+        self.bind_all("<Control-Z>", lambda e: self._undo())
+        self.bind_all("<Control-y>", lambda e: self._redo())
+        self.bind_all("<Control-Y>", lambda e: self._redo())
+        tk.Button(foot, text="되돌리기 (Ctrl+Z)", command=self._undo,
+                  font=(FONT, 9), bg=CARD, fg=TEXT, bd=1, padx=10, pady=5,
+                  cursor="hand2").pack(side="left", padx=(0, 6))
         tk.Button(foot, text="기본 서식 설정", command=self._edit_default_format,
                   font=(FONT, 9), bg=CARD, fg=TEXT, bd=1, padx=10, pady=5,
                   cursor="hand2").pack(side="left")
@@ -985,6 +993,24 @@ class SettingsWindow(tk.Toplevel):
                          "form": it["name"], "span": span, "rows": rows})
 
     # ── 기본 서식 ──
+    # ── 실행 취소 / 다시 실행 ──
+    def _undo(self):
+        if not palette.undo():
+            messagebox.showinfo("되돌릴 것 없음",
+                                "이 창을 연 뒤 되돌릴 편집이 없습니다.\n"
+                                "(프로그램을 켠 동안의 편집만 되돌립니다)",
+                                parent=self)
+            return
+        self.sel_block = None
+        self._reload_tabs()
+        self._notify()
+
+    def _redo(self):
+        if palette.redo():
+            self.sel_block = None
+            self._reload_tabs()
+            self._notify()
+
     def _edit_default_format(self):
         dlg = _DefaultFormatDialog(self)
         self.wait_window(dlg)

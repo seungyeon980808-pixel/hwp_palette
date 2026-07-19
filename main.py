@@ -82,7 +82,7 @@ def on_settings_saved(spec):
     """설정 창에서 저장/전환 시 활성 스펙을 엔진에 반영."""
     hwp_engine.set_active_spec(spec)
     try:
-        status_var.set(f"✅ 양식: {settings.get_active_name()}")
+        notify("ok", f"양식: {settings.get_active_name()}")
     except Exception:
         pass
 
@@ -111,6 +111,57 @@ def ensure_hwp():
         return False
 
 
+# ── 알림 (UI 제안 3·16) ────────────────────────────────
+# 예전엔 성공·경고·오류가 모두 같은 회색 한 줄이라 눈에 안 들어왔고, 다음 메시지가
+# 오면 이전 것이 사라져 "무슨 경고였지?"를 다시 볼 수 없었다.
+# 색 상수(MUTED/BG)는 아래 UI 절에서 정의되므로 여기서는 문자열로 직접 쓴다
+_NOTICE_COLORS = {          # 종류 → (글자색, 배경색)
+    "ok":    ("#0a6b2e", "#e8f7ee"),
+    "warn":  ("#8a5300", "#fff4e0"),
+    "error": ("#9b1c1c", "#fdecec"),
+    "info":  ("#86868b", "#f5f5f7"),
+}
+_notices = []               # 최근 알림 [(시각, 종류, 내용), ...]
+_NOTICE_KEEP = 20
+
+
+def notify(kind, text, detail=""):
+    """상태줄에 색으로 알리고, 최근 목록에도 남긴다(클릭해 다시 볼 수 있게)."""
+    import datetime
+    _notices.append((datetime.datetime.now().strftime("%H:%M:%S"), kind,
+                     text + (f"\n{detail}" if detail else "")))
+    del _notices[:-_NOTICE_KEEP]
+    try:
+        fg, bg = _NOTICE_COLORS.get(kind, _NOTICE_COLORS["info"])
+        status_var.set(text)            # 여기서 notify 를 부르면 무한 재귀다
+        status_lbl.config(fg=fg, bg=bg)
+    except Exception:
+        pass                # UI 가 아직 없는 시점 — 목록에는 이미 남았다
+
+
+def _show_notice_log():
+    """상태줄을 누르면 최근 알림을 펼쳐 보여준다."""
+    if not _notices:
+        messagebox.showinfo("최근 알림", "아직 알림이 없습니다.")
+        return
+    win = tk.Toplevel(root)
+    win.title("최근 알림")
+    win.configure(bg=BG)
+    win.attributes("-topmost", True)
+    tk.Label(win, text="최근 알림 (새 것이 위)", font=_font(10, "bold"),
+             bg=BG, fg=TEXT).pack(anchor="w", padx=14, pady=(12, 6))
+    box = tk.Text(win, width=60, height=min(20, len(_notices) * 2 + 2),
+                  font=("Consolas", 9), relief="solid", bd=1, wrap="word")
+    box.pack(fill="both", expand=True, padx=14)
+    for t, kind, text in reversed(_notices):
+        mark = {"ok": "정상", "warn": "주의", "error": "오류"}.get(kind, "안내")
+        box.insert("end", f"[{t}] {mark}  {text}\n")
+    box.config(state="disabled")
+    tk.Button(win, text="닫기", command=win.destroy, font=_font(9),
+              bg=ACCENT, fg="white", bd=0, padx=14,
+              pady=5, cursor="hand2").pack(anchor="e", padx=14, pady=10)
+
+
 def report_error(what, error, detail=False):
     """실패를 세 곳에 동시에 남긴다 (개선안 12).
 
@@ -122,7 +173,7 @@ def report_error(what, error, detail=False):
     applog.exc(what, error, detail=detail)
     messagebox.showerror(what, f"{type(error).__name__}: {error}")
     try:
-        status_var.set(f"⚠ {what}")
+        notify("error", what)
     except Exception:
         pass        # UI가 아직 안 만들어진 시점 — 로그는 이미 남았다
 
@@ -138,7 +189,7 @@ def fn_new():
     if not ensure_hwp(): return
     try:
         hwp_engine.new_document()
-        status_var.set("✅ 새 문서")
+        notify("ok", "새 문서")
     except Exception as e:
         report_error("새 문서 만들기 실패", e)
 
@@ -151,7 +202,7 @@ def fn_open():
     if path:
         try:
             hwp_engine.open_document(path)
-            status_var.set(f"✅ {pathlib.Path(path).name}")
+            notify("ok", f"{pathlib.Path(path).name}")
         except Exception as e:
             report_error(f"파일 열기 실패: {pathlib.Path(path).name}", e)
 
@@ -160,7 +211,7 @@ def fn_save():
     if not ensure_hwp(): return
     try:
         hwp_engine.save_document()
-        status_var.set("✅ 저장 완료")
+        notify("ok", "저장 완료")
     except Exception as e:
         report_error("저장 실패", e)
 
@@ -207,7 +258,7 @@ def fn_convert():
             hwp_engine._diag("fn_convert: insert_question(시험문제 변환) 후")
             if should_increment:
                 num_var.set(num_var.get() + 1)
-            status_var.set("✅ 변환 완료!")
+            notify("ok", "변환 완료!")
             return
         if md_parser.has_library_tokens(selected):
             # 라이브러리 변환: \라벨\ → 문자 치환 / 템플릿 삽입 + 빈칸 채움
@@ -219,7 +270,7 @@ def fn_convert():
             blocked = _form_plan_conflict(ops)
             if blocked:
                 messagebox.showwarning("양식은 따로 변환해주세요", blocked)
-                status_var.set("⚠ 양식은 라벨만 따로 선택해 변환해주세요")
+                notify("warn", "양식은 라벨만 따로 선택해 변환해주세요")
                 return
             hwp_engine.delete_selection()
             result = engine_library.execute_library_plan(
@@ -228,7 +279,7 @@ def fn_convert():
             if result.get("error"):
                 applog.warn(f"라이브러리 변환 실패: {result['error']}")
                 messagebox.showerror("변환 실패", result["error"])
-                status_var.set(f"⚠ {result['error']}")
+                notify("warn", f"{result['error']}")
                 return
             if result.get("forms"):
                 msg = f"✅ 양식 열기 완료 (빈칸 {result['slots_filled']}개 채움)"
@@ -236,14 +287,18 @@ def fn_convert():
                 msg = (f"✅ 라이브러리 변환: 템플릿 {result['templates']}개, "
                        f"빈칸 {result['slots_filled']}개")
             if warns:
+                # 경고를 목록에도 남긴다 — 창을 닫아도 상태줄 클릭으로 다시 본다
+                notify("warn", f"{msg}  (주의 {len(warns)}건 — 눌러서 보기)",
+                       detail="\n".join(warns))
                 messagebox.showwarning("변환 주의", "\n".join(warns[:8]))
-            status_var.set(msg)
+            else:
+                notify("ok", msg)
             return
         messagebox.showwarning("파싱 실패",
             "마크다운 형식을 인식하지 못했어요.\n"
             "시험문제: '발문:', '자료:', '질문:', '보기:', '선지:'\n"
             "라이브러리: \\라벨\\ (등록한 라벨)")
-        status_var.set("⚠ 마크다운 형식을 인식하지 못했습니다")
+        notify("warn", "마크다운 형식을 인식하지 못했습니다")
     except Exception as e:
         # detail=True — 변환은 단계가 많아 스택 없이는 원인 지점을 못 찾는다
         report_error("마크다운 변환 실패", e, detail=True)
@@ -264,7 +319,7 @@ def fn_reset_format():
             return
         cleaned = md_parser.strip_circled_markers(selected)
         engine_library.apply_default_format(palette.get_default_format(), text=cleaned)
-        status_var.set("✅ 기본 서식으로 변환")
+        notify("ok", "기본 서식으로 변환")
     except Exception as e:
         report_error("기본 서식 변환 실패", e)
 
@@ -284,7 +339,7 @@ def fn_pick_photo():
         return
     try:
         hwp_engine.insert_picture_to_cell(path)
-        status_var.set(f"✅ 사진 삽입: {pathlib.Path(path).name}")
+        notify("ok", f"사진 삽입: {pathlib.Path(path).name}")
     except Exception as e:
         report_error(f"사진 삽입 실패: {pathlib.Path(path).name}", e)
 
@@ -320,7 +375,7 @@ def run_palette_block(block):
             slot_count_fn=_template_slot_count_by_ref)
         if not ok:
             applog.warn(f"팔레트 블럭 실행 거부: {msg}")
-        status_var.set(("✅ " if ok else "⚠ ") + msg)
+        notify("ok" if ok else "warn", msg)
     except Exception as e:
         report_error("팔레트 블럭 실행 실패", e, detail=True)
 
@@ -711,8 +766,10 @@ render_palette()
 
 # 상태 표시 + 버전/날짜 (CLAUDE.md 규칙: 하단 필수 표기)
 status_var = tk.StringVar(value=f"양식: {settings.get_active_name()}")
-tk.Label(root, textvariable=status_var,
-         font=_font(8), fg=MUTED, bg=BG).pack(pady=(6, 0))
+status_lbl = tk.Label(root, textvariable=status_var, font=_font(8),
+                      fg=MUTED, bg=BG, cursor="hand2")
+status_lbl.pack(fill="x", padx=10, pady=(6, 0))
+status_lbl.bind("<Button-1>", lambda e: _show_notice_log())
 tk.Label(root, text=f"v{VERSION} · {RELEASE_DATE}",
          font=_font(7), fg=MUTED, bg=BG).pack(pady=(0, 2))
 # 저작자 표기 — 자유 소프트웨어(AGPL-3.0). 전문은 저장소의 LICENSE 파일.

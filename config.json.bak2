@@ -1,0 +1,460 @@
+{
+  "profiles": {
+    "기본 (2단)": {
+      "layout": {
+        "column_width_mm": 80.0
+      },
+      "font": {
+        "apply": false,
+        "name": "함초롬바탕",
+        "size_pt": 10.0
+      },
+      "material_box": {
+        "row1_height_mm": 45.0,
+        "row2_height_mm": 5.0
+      },
+      "photo_box": {
+        "row1_height_mm": 45.0,
+        "row2_height_mm": 7.0
+      },
+      "experiment_box": {
+        "height_mm": 80.0,
+        "label": "[실험 과정]"
+      },
+      "bogi_box": {
+        "title_height_mm": 3.0,
+        "gap_height_mm": 3.0,
+        "content_height_mm": 20.0,
+        "title": "〈보 기〉",
+        "line_spacing": 130,
+        "cell_margin_left_mm": 2.0,
+        "cell_margin_right_mm": 2.0,
+        "cell_margin_top_mm": 0.5,
+        "cell_margin_bottom_mm": 4.0
+      },
+      "choices": {
+        "row_height_mm": 6.0
+      },
+      "stem": {
+        "indentation": -399,
+        "line_spacing": 150
+      },
+      "question": {
+        "prev_spacing": 800,
+        "next_spacing": 400
+      },
+      "border": {
+        "material_type": "None",
+        "bogi_type": "Solid",
+        "experiment_type": "Solid"
+      }
+    },
+    "기본 (1단)": {
+      "layout": {
+        "column_width_mm": 155.0
+      },
+      "font": {
+        "apply": false,
+        "name": "함초롬바탕",
+        "size_pt": 10.0
+      },
+      "material_box": {
+        "row1_height_mm": 45.0,
+        "row2_height_mm": 5.0
+      },
+      "photo_box": {
+        "row1_height_mm": 45.0,
+        "row2_height_mm": 7.0
+      },
+      "experiment_box": {
+        "height_mm": 80.0,
+        "label": "[실험 과정]"
+      },
+      "bogi_box": {
+        "title_height_mm": 3.0,
+        "gap_height_mm": 3.0,
+        "content_height_mm": 20.0,
+        "title": "〈보 기〉",
+        "line_spacing": 130,
+        "cell_margin_left_mm": 2.0,
+        "cell_margin_right_mm": 2.0,
+        "cell_margin_top_mm": 0.5,
+        "cell_margin_bottom_mm": 4.0
+      },
+      "choices": {
+        "row_height_mm": 6.0
+      },
+      "stem": {
+        "indentation": -399,
+        "line_spacing": 150
+      },
+      "question": {
+        "prev_spacing": 800,
+        "next_spacing": 400
+      },
+      "border": {
+        "material_type": "None",
+        "bogi_type": "Solid",
+        "experiment_type": "Solid"
+      }
+    }
+  },
+  "active_profile": "기본 (2단)",
+  "quick_buttons": [
+    "Ω",
+    "→",
+    "℃",
+    "·",
+    "×",
+    "±",
+    "≒",
+    "≠",
+    "≤",
+    "≥",
+    "√",
+    "∴",
+    "½",
+    "²",
+    "³",
+    "₁",
+    "₂",
+    "α",
+    "β",
+    "γ",
+    "θ",
+    "『』",
+    "μ",
+    "π",
+    "Δ"
+  ],
+  "palette_tabs": [
+    {
+      "name": "문자표",
+      "cols": 15,
+      "blocks": [
+        {
+          "type": "char",
+          "value": "→",
+          "span": 1,
+          "row": 0,
+          "col": 0,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "Ω",
+          "span": 1,
+          "row": 0,
+          "col": 1,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "℃",
+          "span": 1,
+          "row": 0,
+          "col": 2,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "·",
+          "span": 1,
+          "row": 0,
+          "col": 3,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "×",
+          "span": 1,
+          "row": 0,
+          "col": 4,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "±",
+          "span": 1,
+          "row": 0,
+          "col": 5,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "≒",
+          "span": 1,
+          "row": 0,
+          "col": 6,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "≠",
+          "span": 1,
+          "row": 0,
+          "col": 7,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "≤",
+          "span": 1,
+          "row": 0,
+          "col": 8,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "≥",
+          "span": 1,
+          "row": 0,
+          "col": 9,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "√",
+          "span": 1,
+          "row": 1,
+          "col": 0,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "∴",
+          "span": 1,
+          "row": 1,
+          "col": 1,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "½",
+          "span": 1,
+          "row": 1,
+          "col": 2,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "²",
+          "span": 1,
+          "row": 1,
+          "col": 3,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "³",
+          "span": 1,
+          "row": 1,
+          "col": 4,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "₁",
+          "span": 1,
+          "row": 1,
+          "col": 5,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "₂",
+          "span": 1,
+          "row": 1,
+          "col": 6,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "α",
+          "span": 1,
+          "row": 1,
+          "col": 7,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "β",
+          "span": 1,
+          "row": 1,
+          "col": 8,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "γ",
+          "span": 1,
+          "row": 1,
+          "col": 9,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "θ",
+          "span": 1,
+          "row": 2,
+          "col": 0,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "『』",
+          "span": 1,
+          "row": 2,
+          "col": 1,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "μ",
+          "span": 1,
+          "row": 2,
+          "col": 2,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "π",
+          "span": 1,
+          "row": 2,
+          "col": 3,
+          "rows": 1
+        },
+        {
+          "type": "char",
+          "value": "Δ",
+          "span": 1,
+          "row": 2,
+          "col": 4,
+          "rows": 1
+        },
+        {
+          "type": "template",
+          "template": "3배열보기",
+          "span": 2,
+          "ref": "ec5837c41d264866a7f0db80d7d89e16",
+          "row": 2,
+          "col": 5,
+          "rows": 1
+        },
+        {
+          "type": "template",
+          "ref": "ec5837c41d264866a7f0db80d7d89e16",
+          "template": "3배열보기",
+          "span": 3,
+          "row": 2,
+          "col": 7,
+          "rows": 1
+        },
+        {
+          "type": "template",
+          "ref": "ec5837c41d264866a7f0db80d7d89e16",
+          "template": "3배열보기",
+          "span": 5,
+          "row": 3,
+          "col": 0,
+          "rows": 1
+        },
+        {
+          "type": "template",
+          "template": "3배열보기",
+          "span": 4,
+          "ref": "ec5837c41d264866a7f0db80d7d89e16",
+          "row": 5,
+          "col": 7,
+          "rows": 1
+        }
+      ]
+    },
+    {
+      "name": "템플릿",
+      "cols": 15,
+      "blocks": [
+        {
+          "type": "template",
+          "template": "3배열보기",
+          "span": 2,
+          "ref": "ec5837c41d264866a7f0db80d7d89e16",
+          "row": 0,
+          "col": 0,
+          "rows": 1
+        }
+      ]
+    },
+    {
+      "name": "기능",
+      "cols": 15,
+      "blocks": [
+        {
+          "type": "function",
+          "name": "공문 본문",
+          "actions": [
+            {
+              "func": "글씨체",
+              "value": "맑은 고딕"
+            },
+            {
+              "func": "글씨크기",
+              "value": 13.0
+            },
+            {
+              "func": "글자색",
+              "value": 0
+            },
+            {
+              "func": "줄간격",
+              "value": 160
+            }
+          ],
+          "span": 1,
+          "row": 0,
+          "col": 0,
+          "rows": 1
+        }
+      ]
+    },
+    {
+      "name": "시험문제 출제용",
+      "cols": 15,
+      "blocks": [
+        {
+          "type": "template",
+          "template": "보기",
+          "span": 1,
+          "ref": "554f44dc3cc54be7905db5a1248d839a",
+          "row": 0,
+          "col": 0,
+          "rows": 1
+        },
+        {
+          "type": "template",
+          "template": "계획서표지",
+          "span": 1,
+          "ref": "7da954daefb44f5ca20718c7104ab36c",
+          "row": 0,
+          "col": 1,
+          "rows": 1
+        },
+        {
+          "type": "template",
+          "ref": "554f44dc3cc54be7905db5a1248d839a",
+          "template": "보기",
+          "span": 1,
+          "row": 0,
+          "col": 2,
+          "rows": 1
+        }
+      ]
+    },
+    {
+      "name": "메인",
+      "cols": 8,
+      "blocks": []
+    }
+  ],
+  "ui_scale": 1.0
+}

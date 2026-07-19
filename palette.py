@@ -61,7 +61,7 @@ def load_tabs():
     tabs = settings.get_config_value(TABS_KEY, None)
     if not isinstance(tabs, list) or not tabs:
         tabs = _seed_tabs()
-        save_tabs(tabs)
+        save_tabs(tabs, _record=False)   # 첫 생성 — 되돌릴 과거가 없다
     # 하위호환 기본값
     migrated = False
     if not any(t.get("name") == MAIN_TAB for t in tabs):
@@ -81,7 +81,8 @@ def load_tabs():
                     and b.get("template") and _migrate_template_ref(b)):
                 migrated = True
     if migrated:
-        save_tabs(tabs)
+        # 하위호환 이전은 사용자의 편집이 아니므로 실행취소에 쌓지 않는다
+        save_tabs(tabs, _record=False)
     return tabs
 
 
@@ -162,8 +163,54 @@ def _migrate_template_ref(block):
     return False
 
 
-def save_tabs(tabs):
+# ── 실행 취소 (UI 제안 1) ───────────────────────────────
+# 블럭을 잘못 지우면 되돌릴 방법이 없었다. 저장이 JSON 한 덩어리라 통째로 떠 두는
+# 비용이 사실상 0이라, 저장할 때마다 직전 상태를 쌓아 둔다.
+# 프로그램을 켠 동안만 유지한다(파일에 안 남긴다) — 되돌리기는 '방금 한 실수'를
+# 위한 것이지 어제 것을 위한 게 아니고, 그건 backup.py 가 맡는다.
+_UNDO_LIMIT = 30
+_undo_stack = []
+_redo_stack = []
+
+
+def save_tabs(tabs, _record=True):
+    if _record:
+        prev = settings.get_config_value(TABS_KEY, None)
+        if prev is not None and prev != tabs:
+            _undo_stack.append(copy.deepcopy(prev))
+            del _undo_stack[:-_UNDO_LIMIT]
+            _redo_stack.clear()     # 새 편집이 생기면 '다시 실행'은 무효
     settings.set_config_value(TABS_KEY, tabs)
+
+
+def can_undo():
+    return bool(_undo_stack)
+
+
+def can_redo():
+    return bool(_redo_stack)
+
+
+def undo():
+    """직전 편집을 되돌린다. 되돌렸으면 True."""
+    if not _undo_stack:
+        return False
+    cur = settings.get_config_value(TABS_KEY, None)
+    if cur is not None:
+        _redo_stack.append(copy.deepcopy(cur))
+    save_tabs(_undo_stack.pop(), _record=False)
+    return True
+
+
+def redo():
+    """되돌린 것을 다시 실행한다."""
+    if not _redo_stack:
+        return False
+    cur = settings.get_config_value(TABS_KEY, None)
+    if cur is not None:
+        _undo_stack.append(copy.deepcopy(cur))
+    save_tabs(_redo_stack.pop(), _record=False)
+    return True
 
 
 def add_tab(name, cols=DEFAULT_COLS):

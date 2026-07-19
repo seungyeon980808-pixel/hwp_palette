@@ -10,6 +10,7 @@
 
 import copy
 import applog
+import backup
 import json
 import pathlib
 
@@ -108,6 +109,7 @@ def load_config():
 
 def save_config(cfg):
     try:
+        backup.rotate(CONFIG_PATH)      # 저장 직전 상태를 .bak1 로 보관
         CONFIG_PATH.write_text(
             json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         return True

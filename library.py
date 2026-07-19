@@ -18,6 +18,7 @@ import shutil
 import uuid
 
 import applog
+import backup
 
 LIBRARY_PATH = pathlib.Path(__file__).parent / "library.json"
 FRAGMENTS_DIR = pathlib.Path(__file__).parent / "fragments"
@@ -109,6 +110,7 @@ def get_item(category, item_id=None, name=None):
 
 def save(data):
     _ensure_dirs()
+    backup.rotate(LIBRARY_PATH)         # 저장 직전 상태를 .bak1 로 보관
     LIBRARY_PATH.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 

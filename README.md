@@ -190,6 +190,7 @@ bogi_visual_ui.py  보기박스 시각 편집
 form_fill.py       양식 채우기 — HWPX 빈칸 뽑기/채우기 (표준 라이브러리만)
 form_fill_ui.py    양식 채우기 창
 applog.py          앱 로그 (app.log — 실패 원인 추적용)
+backup.py          개인 데이터 롤링 백업 (.bak1~3)
 tests/             단위 테스트 (한글 없이 실행: python -m unittest discover -s tests)
 config.json        개인 설정 · 팔레트 탭 (git 제외)
 library.json       개인 라이브러리 (git 제외)
