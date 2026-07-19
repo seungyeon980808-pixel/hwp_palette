@@ -140,22 +140,33 @@ def capture_fragment(dest_path):
 
     부작용: 사용자의 클립보드가 캡처 내용으로 바뀐다 — 캡처 흐름에서는
     read_selection_text 가 이미 Copy 를 쓰고 있어 추가 손해는 없다.
+
+    반환: 조각의 본문 글자 (미리보기용, UI 제안 7). 실패하면 빈 문자열.
+      **여기서 뽑는 이유** — 이 순간이 조각 내용을 글로 읽을 수 있는 유일한
+      때다. .hwp 는 이진 형식이라 나중에 파일만 보고는 못 읽고, 다시 읽으려면
+      한글을 켜서 파일을 열어야 한다. 지금은 이미 임시 탭에 펼쳐져 있다.
     """
     hwp = _h()
     if not has_selection():
         raise RuntimeError("캡처할 선택 영역이 없습니다")
     hwp.HAction.Run("Copy")
     saved = hwp.XHwpDocuments.Count
+    preview = ""
     try:
         hwp.XHwpDocuments.Add(1)          # 1 = 새 탭
         hwp.HAction.Run("Paste")
         hwp.save_as(str(dest_path), format="HWP")
+        try:
+            preview = hwp.GetTextFile("TEXT", "") or ""
+        except Exception as e:
+            applog.exc("조각 미리보기 글자 추출 실패 — 미리보기 없이 등록", e)
     finally:
         try:
             if hwp.XHwpDocuments.Count > saved:
                 hwp.XHwpDocuments.Active_XHwpDocument.Close(isDirty=False)
         except Exception as e:
             applog.exc("캡처용 임시 탭 닫기 실패 — 탭이 남아 있을 수 있음", e)
+    return preview
 
 
 def insert_fragment(path):

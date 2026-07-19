@@ -19,9 +19,10 @@ import uuid
 
 import applog
 import backup
+import paths
 
-LIBRARY_PATH = pathlib.Path(__file__).parent / "library.json"
-FRAGMENTS_DIR = pathlib.Path(__file__).parent / "fragments"
+LIBRARY_PATH = paths.DATA_DIR / "library.json"
+FRAGMENTS_DIR = paths.DATA_DIR / "fragments"
 
 CATEGORIES = ("서식", "문자", "템플릿", "양식")
 
@@ -167,6 +168,33 @@ def add_char(name, text, label=None, group=None):
     return item["id"]
 
 
+# ── 조각 미리보기 (UI 제안 7) ───────────────────────────
+# 진짜 그림 썸네일은 만들 수 없다 — .hwp 를 이미지로 굽는 길이 한글 자동화에
+# 없고, 화면을 캡처하려면 한글을 띄워 파일을 열어야 한다(느리고 잘 깨진다).
+# 대신 **저장하는 순간** 뽑아둔 본문 글자를 몇 줄 보여준다. 이름만으로는
+# '결재란2' 가 무엇인지 알 수 없지만, 첫 줄 몇 개를 보면 바로 안다.
+PREVIEW_LINES = 4
+PREVIEW_WIDTH = 28
+
+
+def make_preview(text):
+    """조각 본문 글자 → 몇 줄짜리 미리보기. 저장할 때 한 번만 계산한다."""
+    if not text:
+        return ""
+    full = [" ".join(raw.split()) for raw in str(text).splitlines()]
+    full = [s for s in full if s]           # 표 안의 빈 줄·연속 공백 정리
+    lines = [s if len(s) <= PREVIEW_WIDTH else s[:PREVIEW_WIDTH] + "…"
+             for s in full[:PREVIEW_LINES]]
+    if len(full) > PREVIEW_LINES:           # 딱 맞으면 붙이지 않는다
+        lines.append("…")
+    return "\n".join(lines)
+
+
+def get_preview(item):
+    """항목의 미리보기 글자. 예전에 등록한 것은 비어 있다."""
+    return (item or {}).get("preview", "") or ""
+
+
 def add_template_from_capture(name, save_to, label=None, group=None,
                               slot_count=0):
     r"""템플릿을 등록한다. 조각을 **최종 위치에 바로 저장**하는 방식.
@@ -189,11 +217,12 @@ def add_template_from_capture(name, save_to, label=None, group=None,
     item = _meta(_unique_name(data["템플릿"], name), label, group)
     fname = f"{uuid.uuid4().hex}.hwp"
     dest = FRAGMENTS_DIR / fname
-    save_to(dest)
+    preview = save_to(dest)         # capture_fragment 는 본문 글자를 돌려준다
     if not dest.exists():
         raise RuntimeError("조각 저장에 실패했습니다 (파일이 생성되지 않음)")
     item["file"] = fname
     item["slot_count"] = int(slot_count or 0)
+    item["preview"] = make_preview(preview)
     data["템플릿"].append(item)
     save(data)
     return item["id"]

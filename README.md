@@ -165,6 +165,25 @@ python main.py        # 또는 run.bat
 
 한글을 미리 켜둘 필요는 없다 — 버튼을 누르면 자동으로 연결된다.
 
+### 파이썬 없이 쓰기 (exe)
+
+파이썬이 깔려 있지 않은 PC(다른 선생님 컴퓨터 등)에 건네려면 exe 로 묶는다.
+
+```bash
+pip install pyinstaller
+python build_exe.py          # → dist/hwp_palette.exe (약 46MB)
+```
+
+`dist/hwp_palette.exe` **파일 하나만** 복사하면 된다. 한글은 여전히 필요하다
+(이 프로그램은 한글을 조종하는 도구이지 한글을 대신하지 않는다).
+
+- 설정·라이브러리·조각은 **exe 옆에** 저장된다. USB 에 넣어 다녀도 그대로 따라온다.
+  (`Program Files` 처럼 쓰기가 막힌 곳에 두면 `%LOCALAPPDATA%\hwp_palette` 로 간다)
+- 처음 켜면 쓰는 법을 안내하는 창이 한 번 뜬다.
+- 코드 서명이 없어 **백신이 경고**할 수 있다. 학교 PC 라면 미리 확인하는 게 좋다.
+- 크기가 46MB 인 이유는 pyhwpx 가 numpy·pandas·Pillow 를 필수로 끌고 오기 때문이다.
+  이걸 빼면 빌드는 되지만 실행 즉시 죽는다 (`hwp_palette.spec` 의 주석 참고).
+
 ---
 
 ## 파일 구조
@@ -191,6 +210,11 @@ form_fill.py       양식 채우기 — HWPX 빈칸 뽑기/채우기 (표준 라
 form_fill_ui.py    양식 채우기 창
 applog.py          앱 로그 (app.log — 실패 원인 추적용)
 backup.py          개인 데이터 롤링 백업 (.bak1~3)
+theme.py           화면 색 (밝게/어둡게) · 대비 계산
+paths.py           파일 저장 위치 (소스 실행 / exe 실행 구분)
+onboarding.py      첫 실행 안내 (4쪽)
+hwp_palette.spec   PyInstaller 빌드 설정
+build_exe.py       exe 빌드 스크립트 (점검 후 PyInstaller 호출)
 tests/             단위 테스트 (한글 없이 실행: python -m unittest discover -s tests)
 config.json        개인 설정 · 팔레트 탭 (git 제외)
 library.json       개인 라이브러리 (git 제외)

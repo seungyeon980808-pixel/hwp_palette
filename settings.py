@@ -13,8 +13,9 @@ import applog
 import backup
 import json
 import pathlib
+import paths
 
-CONFIG_PATH = pathlib.Path(__file__).parent / "config.json"
+CONFIG_PATH = paths.DATA_DIR / "config.json"
 
 # ── 기본 스펙 ──────────────────────────────────────────
 # 모든 값의 단위: *_mm = 밀리미터, *_pt = 포인트,

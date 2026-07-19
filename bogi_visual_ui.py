@@ -15,14 +15,17 @@ import settings
 import exam_engine
 import hwp_engine
 
-BG   = "#f5f5f7"
-CARD = "#ffffff"
-TEXT = "#1d1d1f"
-MUTED = "#86868b"
-ACCENT = "#0071e3"
-BORDER = "#d2d2d7"
-LINE = "#c9ccd1"
-FONT = "맑은 고딕"
+import theme                       # 색은 theme.py 한 곳에서 (밝게/어둡게)
+
+_C = theme.colors()
+BG   = _C["bg"]
+CARD = _C["card"]
+TEXT = _C["text"]
+MUTED = _C["muted"]
+ACCENT = _C["accent"]
+BORDER = _C["border"]
+LINE = _C["border"]
+FONT = theme.FONT
 
 # (키, 라벨, 최소, 최대, 스텝, 단위)
 CONTROLS = [

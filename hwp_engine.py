@@ -54,8 +54,8 @@ def _diag(tag):
     try:
         import win32gui           # 플랫폼 의존 — 없을 수 있어 지역 import
         if _DIAG_PATH is None:
-            _DIAG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                      "window_diag.log")
+            import paths      # exe 로 묶으면 __file__ 은 지워지는 임시 폴더다
+            _DIAG_PATH = str(paths.DATA_DIR / "window_diag.log")
             with open(_DIAG_PATH, "w", encoding="utf-8") as f:
                 f.write("=== 창 상태 추적 시작 ===\n")
         lines = []

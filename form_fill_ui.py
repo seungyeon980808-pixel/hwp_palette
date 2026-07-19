@@ -20,13 +20,16 @@ import engine_library
 import form_fill
 import hwp_engine
 
-BG = "#f5f5f7"
-CARD = "#ffffff"
-ACCENT = "#0071e3"
-TEXT = "#1d1d1f"
-MUTED = "#86868b"
-BORDER = "#d2d2d7"
-FONT = "맑은 고딕"
+import theme                       # 색은 theme.py 한 곳에서 (밝게/어둡게)
+
+_C = theme.colors()
+BG = _C["bg"]
+CARD = _C["card"]
+ACCENT = _C["accent"]
+TEXT = _C["text"]
+MUTED = _C["muted"]
+BORDER = _C["border"]
+FONT = theme.FONT
 MONO = "Consolas"
 
 

@@ -21,14 +21,17 @@ import hwp_engine
 import engine_library
 import library_ui                  # commit_ime (IME 조합 확정) 공용
 
-BG = "#f5f5f7"
-CARD = "#ffffff"
-ACCENT = "#0071e3"
-TEXT = "#1d1d1f"
-MUTED = "#86868b"
-BORDER = "#d2d2d7"
-ROWBG = "#fafafa"
-FONT = "맑은 고딕"
+import theme                       # 색은 theme.py 한 곳에서 (밝게/어둡게)
+
+_C = theme.colors()
+BG = _C["bg"]
+CARD = _C["card"]
+ACCENT = _C["accent"]
+TEXT = _C["text"]
+MUTED = _C["muted"]
+BORDER = _C["border"]
+ROWBG = _C["subbg"]
+FONT = theme.FONT
 
 TYPE_LABEL = {"char": "문자", "template": "템플릿", "function": "서식 조합",
               "form": "양식"}
@@ -659,14 +662,14 @@ class SettingsWindow(tk.Toplevel):
     def _make_tile(self, parent, i, blk, span=1):
         selected = (self.sel_block == i)
         # 사용자 지정 색이 우선, 없으면 종류별 기본색 (메인 창과 같은 규칙)
-        bg = blk.get("color") or {"char": CARD, "template": "#eef4ff",
-                                  "function": "#fff4e6",
-                                  "form": "#eafaf1"}.get(blk["type"], CARD)
+        bg = blk.get("color") or theme.block_colors().get(blk["type"], CARD)
         tile = tk.Frame(parent, bg=bg,
                         highlightbackground=ACCENT if selected else BORDER,
                         highlightthickness=2 if selected else 1)
         tile.pack_propagate(False)
-        lab = tk.Label(tile, text=self._tile_text(blk, span), bg=bg, fg=TEXT,
+        # 글자색은 배경 밝기에 맞춰 정한다 — 어두운 색을 골라도 읽히게 (제안 18)
+        lab = tk.Label(tile, text=self._tile_text(blk, span), bg=bg,
+                       fg=theme.text_on(bg),
                        font=(FONT, 10 if blk["type"] == "char" else 8))
         lab.pack(expand=True)
         self._tiles[i] = tile
@@ -678,7 +681,61 @@ class SettingsWindow(tk.Toplevel):
             w.bind("<Double-Button-1>", lambda e, idx=i: self._edit_block(idx))
             w.bind("<Button-3>", lambda e, idx=i: self._tile_menu(e, idx))
             w.config(cursor="hand2")
+        self._add_grip(tile, i)
         return tile
+
+    # ── 크기 조절 손잡이 (UI 제안 10) ─────────────────────
+    # 여태 크기를 바꾸려면 우클릭 → '가로 +1' 을 여러 번 눌러야 했다. 3×2 로
+    # 만들려면 다섯 번이다. 오른쪽 아래 모서리를 끌면 한 번에 끝난다.
+    # (우클릭 메뉴는 남겨둔다 — 손잡이가 작아 잡기 어려울 때가 있다)
+    def _add_grip(self, tile, i):
+        grip = tk.Frame(tile, bg=ACCENT, width=7, height=7,
+                        cursor="bottom_right_corner")
+        grip.place(relx=1.0, rely=1.0, anchor="se")
+        # tile 에 건 바인딩은 자식인 grip 에는 오지 않는다(Tk 는 위젯별 바인딩을
+        # 부모로 전파하지 않는다). 그래서 끌기가 '옮기기'와 섞이지 않는다.
+        grip.bind("<ButtonPress-1>", lambda e, idx=i: self._grip_press(idx))
+        grip.bind("<B1-Motion>", self._grip_motion)
+        grip.bind("<ButtonRelease-1>", self._grip_release)
+
+    def _grip_press(self, idx):
+        self._set_selection(idx)
+        b = palette.load_tabs()[self.sel_tab]["blocks"][idx]
+        self._grip = {"idx": idx,
+                      "row": int(b.get("row", 0)), "col": int(b.get("col", 0)),
+                      "span": int(b.get("span", 1)), "rows": int(b.get("rows", 1))}
+
+    def _grip_motion(self, e):
+        g = getattr(self, "_grip", None)
+        if not g:
+            return
+        rc = self._xy_to_cell(e.x_root, e.y_root)
+        if not rc:
+            return
+        r, c = rc
+        span = max(1, c - g["col"] + 1)
+        rows = max(1, r - g["row"] + 1)
+        if (span, rows) == (g["span"], g["rows"]):
+            return
+        blocks = palette.load_tabs()[self.sel_tab]["blocks"]
+        if not palette.area_is_free(blocks, g["row"], g["col"], span, rows,
+                                    skip_index=g["idx"]):
+            return                      # 다른 블럭 위로는 넘어가지 않는다
+        g["span"], g["rows"] = span, rows
+        try:                            # 지금 몇 칸인지 글로도 (UI 제안 12 와 짝)
+            self.block_head.config(text=f"{span}×{rows}칸 으로 조절 중")
+        except Exception:
+            pass
+
+    def _grip_release(self, e):
+        g = getattr(self, "_grip", None)
+        self._grip = None
+        if not g:
+            return
+        palette.set_block_area(self.sel_tab, g["idx"], g["row"], g["col"],
+                               g["span"], g["rows"])
+        self._render_blocks()
+        self._notify()
 
     def _tile_menu(self, e, idx):
         """타일 우클릭 메뉴 — 옛 상단 바(편집·크기·삭제)를 여기로 옮겼다."""
@@ -982,20 +1039,20 @@ class SettingsWindow(tk.Toplevel):
         if not meta.result:
             return
         name, label, group = meta.result
-        library.FRAGMENTS_DIR.mkdir(exist_ok=True)
-        tmp = library.FRAGMENTS_DIR / f"_tmp_{int(time.time()*1000)}.hwp"
+        # add_template_from_capture 의 두 번째 인자는 **함수**다 (목적지를 받아
+        # 거기 저장하는 함수). 여기서만 임시 파일 경로를 넘기고 있어서 안에서
+        # save_to(dest) 가 'Path 는 호출할 수 없다'로 터졌다 — 환경설정에서
+        # 템플릿 블럭을 새로 만들 때마다 실패. 라이브러리 창(library_ui)은
+        # 처음부터 함수를 넘기고 있었다. 그 방식으로 맞춘다.
+        # (조각을 최종 이름으로 바로 저장하므로 임시 파일도 필요 없다 —
+        #  이름 바꾸기에서 나던 WinError 32 를 피하려던 그 설계 그대로다)
         try:
-            engine_library.capture_fragment(tmp)
             item_id = library.add_template_from_capture(
-                name, tmp, label=label, group=group, slot_count=slot_count)
+                name, engine_library.capture_fragment,
+                label=label, group=group, slot_count=slot_count)
         except Exception as e:
             messagebox.showerror("캡처 실패", str(e), parent=self)
             return
-        finally:
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
         self._add_template_block(library.find_by_id("템플릿", item_id), span, rows)
 
     def _add_template_block(self, item, span=2, rows=1):

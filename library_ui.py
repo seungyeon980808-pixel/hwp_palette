@@ -21,14 +21,17 @@ import library
 import builtin_chars
 import settings
 
-BG = "#f5f5f7"
-CARD = "#ffffff"
-ACCENT = "#0071e3"
-TEXT = "#1d1d1f"
-MUTED = "#86868b"
-BORDER = "#d2d2d7"
-ROWBG = "#fafafa"
-FONT = "맑은 고딕"
+import theme                       # 색은 theme.py 한 곳에서 (밝게/어둡게)
+
+_C = theme.colors()
+BG = _C["bg"]
+CARD = _C["card"]
+ACCENT = _C["accent"]
+TEXT = _C["text"]
+MUTED = _C["muted"]
+BORDER = _C["border"]
+ROWBG = _C["subbg"]
+FONT = theme.FONT
 
 TAB_DESC = {
     "서식": "문서에서 캡처한 글자 모양(굵기·색상·자간 등) 일부만 저장해 "
@@ -584,7 +587,10 @@ class LibraryManager(tk.Toplevel):
             return f"{item['name']}  |  {meta}"
         slots = int(item.get("slot_count") or 0)
         slot_txt = f"빈칸 {slots}개" if slots else "빈칸 없음"
-        return f"{slot_txt}  |  {meta}"
+        # 저장할 때 뽑아둔 본문 첫 줄 (UI 제안 7) — 이름이 비슷한 조각을 구별하게
+        head = library.get_preview(item).splitlines()
+        head = f"  |  {head[0]}" if head else ""
+        return f"{slot_txt}{head}  |  {meta}"
 
     # ── 서식 ─────────────────────────────────────────
     def _add_style(self):

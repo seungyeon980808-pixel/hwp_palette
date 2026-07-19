@@ -48,6 +48,9 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 
 import applog
+import paths
+import theme
+import onboarding
 import parser as md_parser
 import hwp_engine
 import engine_library
@@ -114,13 +117,8 @@ def ensure_hwp():
 # ── 알림 (UI 제안 3·16) ────────────────────────────────
 # 예전엔 성공·경고·오류가 모두 같은 회색 한 줄이라 눈에 안 들어왔고, 다음 메시지가
 # 오면 이전 것이 사라져 "무슨 경고였지?"를 다시 볼 수 없었다.
-# 색 상수(MUTED/BG)는 아래 UI 절에서 정의되므로 여기서는 문자열로 직접 쓴다
-_NOTICE_COLORS = {          # 종류 → (글자색, 배경색)
-    "ok":    ("#0a6b2e", "#e8f7ee"),
-    "warn":  ("#8a5300", "#fff4e0"),
-    "error": ("#9b1c1c", "#fdecec"),
-    "info":  ("#86868b", "#f5f5f7"),
-}
+# 색 상수(MUTED/BG)는 아래 UI 절에서 정의되므로 theme 에서 직접 받는다
+_NOTICE_COLORS = theme.notice_colors()      # 종류 → (글자색, 배경색)
 _notices = []               # 최근 알림 [(시각, 종류, 내용), ...]
 _NOTICE_KEEP = 20
 
@@ -420,17 +418,20 @@ def run_palette_block(block):
         report_error("팔레트 블럭 실행 실패", e, detail=True)
 
 
-# ── UI (Apple 스타일 밝은 톤) ──────────────────
-BG     = "#f5f5f7"
-CARD   = "#ffffff"
-ACCENT = "#0071e3"
-GREEN  = "#0071e3"
-YELLOW = "#e8e8ed"
-TEXT   = "#1d1d1f"
-MUTED  = "#86868b"
-BORDER = "#d2d2d7"
-SUBBG  = "#fafafa"
-FONT   = "맑은 고딕"
+# ── UI 색 ─────────────────────────────────────
+# 값은 theme.py 에 있다 (밝게/어둡게 두 벌). 여기서는 이름만 받아 쓴다 —
+# 아래 코드가 BG/TEXT 를 수백 번 참조하므로 이름은 그대로 둔다.
+_C     = theme.colors()
+BG     = _C["bg"]
+CARD   = _C["card"]
+ACCENT = _C["accent"]
+GREEN  = _C["green"]
+YELLOW = _C["yellow"]
+TEXT   = _C["text"]
+MUTED  = _C["muted"]
+BORDER = _C["border"]
+SUBBG  = _C["subbg"]
+FONT   = theme.FONT
 
 # 화면 크기 모드 — '크게'(1.3배)로 두면 글자·칸이 모두 30% 커진다.
 # 위젯을 만든 뒤에는 일괄 변경이 안 되므로(각각 폰트를 다시 줘야 함),
@@ -454,7 +455,7 @@ def drag(e): root.geometry(
     f"+{root.winfo_x()+e.x-root._x}+{root.winfo_y()+e.y-root._y}")
 
 # ── 앱 아이콘 (사용자 제작 hwp-final.svg 를 PNG 로 구운 것) ──
-_ICON_96 = pathlib.Path(__file__).parent / "assets" / "icon-96.png"
+_ICON_96 = paths.RESOURCE_DIR / "assets" / "icon-96.png"
 _icon_img = _icon_small = None
 try:
     _icon_img = tk.PhotoImage(file=str(_ICON_96))
@@ -464,12 +465,33 @@ except Exception as e:
     applog.exc("앱 아이콘 로드 실패 — 기본 아이콘으로 실행", e)
 
 
-def _toggle_scale():
-    """작게(1.0) ↔ 크게(1.3) 전환. 위젯 폰트는 만든 뒤 못 바꾸므로 재시작한다."""
-    settings.set_ui_scale(1.3 if SCALE < 1.15 else 1.0)
+def _restart():
+    """프로그램을 다시 띄운다 (화면 크기·색 모드 전환용).
+
+    Tk 위젯은 만든 뒤에 폰트·색을 일괄로 못 바꾼다(위젯마다 config 를 다시 줘야
+    하고, 이미 닫힌 창은 손댈 수도 없다). 재시작이 가장 확실하고 코드도 짧다.
+    exe 로 묶으면 sys.executable 이 곧 프로그램이라 인자를 붙이면 안 된다.
+    """
     import os
     import sys
-    os.execl(sys.executable, sys.executable, str(pathlib.Path(__file__).resolve()))
+    _remember_pos(quit_after=False)          # 지금 자리에서 다시 뜨도록
+    if getattr(sys, "frozen", False):        # PyInstaller exe
+        os.execl(sys.executable, sys.executable)
+    else:
+        os.execl(sys.executable, sys.executable,
+                 str(pathlib.Path(__file__).resolve()))
+
+
+def _toggle_scale():
+    """작게(1.0) ↔ 크게(1.3) 전환."""
+    settings.set_ui_scale(1.3 if SCALE < 1.15 else 1.0)
+    _restart()
+
+
+def _toggle_theme():
+    """밝게 ↔ 어둡게 전환 (UI 제안 17)."""
+    theme.set_mode("light" if theme.is_dark() else "dark")
+    _restart()
 
 
 # 타이틀
@@ -497,6 +519,12 @@ tk.Button(title, text=("크게" if SCALE < 1.15 else "작게"),
           command=_toggle_scale, font=_font(8), fg=MUTED, bg=CARD,
           activebackground=BORDER, bd=0, padx=6,
           cursor="hand2").pack(side="right", padx=(0, 4))
+# 밝게/어둡게 (UI 제안 17) — 누르면 다시 시작하며 창 위치는 유지된다
+_theme_btn = tk.Button(title, text=("어둡게" if not theme.is_dark() else "밝게"),
+                       command=_toggle_theme, font=_font(8), fg=MUTED, bg=CARD,
+                       activebackground=BORDER, bd=0, padx=6,
+                       cursor="hand2")
+_theme_btn.pack(side="right", padx=(0, 4))
 tk.Frame(root, bg=BORDER, height=1).pack(fill="x")
 
 # 파일 버튼
@@ -718,8 +746,7 @@ def render_palette():
 # 반드시 같아야 한다. 'form'이 여기에만 빠져 있어서, 양식 블럭이 환경설정에서는
 # 📄+연녹색인데 메인 팔레트에서는 ƒ+흰 배경으로 보였다.
 # type "function"은 UI에서 '서식 조합'으로 부른다 (개선안 10 — 저장 키는 그대로).
-_BLOCK_COLOR = {"char": CARD, "template": "#eef4ff",
-                "function": "#fff4e6", "form": "#eafaf1"}
+_BLOCK_COLOR = theme.block_colors()
 
 # 팔레트 한 칸의 한 변(px). 칸은 정사각형이고, **칸 수에 맞춰 크기가 변한다** —
 # 고정 크기로 두면 칸 수가 적을 때 오른쪽에 빈 공간이 크게 남는다.
@@ -789,7 +816,13 @@ def _block_tooltip(blk):
         n = int(it.get("slot_count") or 0)
         where = "새 문서로 열기" if btype == "form" else "커서 자리에 삽입"
         blanks = f"빈칸 {n}개 — 변환 시 아랫줄 {n}줄이 채워집니다" if n else "빈칸 없음"
-        return f"{cat} · {it['name']}\n{where} · {blanks}"
+        tip = f"{cat} · {it['name']}\n{where} · {blanks}"
+        # 저장할 때 뽑아둔 본문 몇 줄 (UI 제안 7) — 이름이 비슷한 템플릿을
+        # 누르기 전에 구별할 수 있게. 예전에 등록한 것은 비어 있어 안 붙는다.
+        prev = library.get_preview(it)
+        if prev:
+            tip += "\n───────────\n" + prev
+        return tip
     return name
 
 
@@ -836,12 +869,18 @@ def _make_block_button(parent, blk, span=1):
     full = _block_label(blk)
     limit = _block_label_max(span)
     label = full if len(full) <= limit else full[:limit] + "…"
+    bg = blk.get("color") or _BLOCK_COLOR.get(blk.get("type"), CARD)
     btn = tk.Button(parent, text=label,
                     command=lambda b=blk: run_palette_block(b),
-                    font=_font(9), fg=TEXT,
-                    bg=blk.get("color") or _BLOCK_COLOR.get(blk.get("type"), CARD),
+                    font=_font(9),
+                    # 글자색을 TEXT 로 고정하면 사용자가 남색·빨강을 고르거나
+                    # 어두운 모드로 바꿨을 때 글자가 배경에 묻힌다 (UI 제안 18)
+                    fg=theme.text_on(bg), bg=bg,
                     activebackground=BORDER, bd=1, relief="solid", pady=0,
-                    cursor="hand2")
+                    cursor="hand2",
+                    # 키보드로 이동할 때 '지금 어디'인지 보이게 — 초점 테두리
+                    highlightthickness=2, highlightbackground=bg,
+                    highlightcolor=ACCENT)
     # 이름이 안 잘려도 '무엇이 들었는지'를 보여주므로 늘 붙인다 (UI 제안 6)
     _add_tooltip(btn, _block_tooltip(blk))
     return btn
@@ -1033,14 +1072,24 @@ else:
     root.geometry(f"+{root.winfo_screenwidth() - root.winfo_width() - 20}+80")
 
 
-def _remember_pos():
-    """창을 닫을 때 위치를 기억한다 — 멀티 모니터에서 매번 옮기지 않게."""
+def _remember_pos(quit_after=True):
+    """창을 닫을 때 위치를 기억한다 — 멀티 모니터에서 매번 옮기지 않게.
+
+    화면 모드·색 모드 전환(_restart)에서도 부른다. 그때는 창을 닫으면 안 되므로
+    quit_after=False — 위치만 남기고 프로세스는 그대로 갈아탄다.
+    """
     try:
         settings.set_window_pos(root.winfo_x(), root.winfo_y())
     except Exception as e:
         applog.exc("창 위치 저장 실패", e)
-    root.destroy()
+    if quit_after:
+        root.destroy()
 
 
 root.protocol("WM_DELETE_WINDOW", _remember_pos)
+
+# 첫 실행 안내 (UI 제안 11) — exe 를 받은 사람은 여기서 쓰는 법을 배운다.
+# mainloop 전에 부르면 창이 아직 안 그려져 위치 계산이 틀어지므로 after_idle.
+root.after_idle(lambda: onboarding.maybe_show(root, _font))
+
 root.mainloop()

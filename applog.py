@@ -15,7 +15,9 @@ import datetime
 import pathlib
 import traceback
 
-LOG_PATH = pathlib.Path(__file__).parent / "app.log"
+import paths
+
+LOG_PATH = paths.DATA_DIR / "app.log"
 MAX_BYTES = 512 * 1024          # 512KB 넘으면 새로 시작
 _console = False                # True 면 콘솔에도 출력 (개발용)
 
