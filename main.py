@@ -538,29 +538,32 @@ def render_palette():
                  font=(FONT, 8), fg=MUTED, bg=BG).pack(anchor="w")
         return
 
+    # 칸 크기는 폭에 맞춰 정한다 — 칸 수가 늘면 칸이 작아져 빈 공간이 안 생긴다.
+    # winfo_width() 는 창이 화면에 올라오기 전에는 1 이라 쓸 수 없다(첫 렌더가
+    # mainloop 前에 일어난다). 위젯이 '요구하는' 폭은 그 전에도 정확하다.
+    avail = max(pal_area.winfo_width(),
+                root.winfo_reqwidth() - 2 * _PAL_PAD_PX,
+                _PAL_MIN_WIDTH_PX)
+    cell_px = _adaptive_cell_px(avail, cols)
+
     grid = tk.Frame(pal_area, bg=BG)
-    grid.pack(anchor="w")       # 창 폭에 맞춰 늘리지 않는다 — 칸 크기를 고정하려고
+    grid.pack(anchor="w")
     for i in range(cols):
-        grid.columnconfigure(i, minsize=_BLOCK_CELL_PX + _BLOCK_GAP_PX,
-                             weight=0, uniform="pal")
-    r = c = 0
+        grid.columnconfigure(i, minsize=cell_px + _BLOCK_GAP_PX, weight=0,
+                             uniform="pal")
     for blk in blocks:
-        span = min(int(blk.get("span", 1)), cols)
-        if c + span > cols:      # 칸 넘치면 다음 줄
-            r += 1
-            c = 0
+        span = max(1, min(int(blk.get("span", 1)), cols))
+        rows = max(1, int(blk.get("rows", 1)))
+        r, c = int(blk.get("row", 0)), int(blk.get("col", 0))
         # 칸을 고정 크기 틀에 넣는다. 버튼을 그냥 grid 에 놓으면 글자 길이에 맞춰
-        # 칸이 넓어져 문자 블럭이 정사각형이 안 된다.
-        cell = tk.Frame(grid, bg=BG, height=_BLOCK_CELL_PX,
-                        width=_BLOCK_CELL_PX * span + _BLOCK_GAP_PX * (span - 1))
+        # 칸이 넓어져 블럭이 정사각형 격자에서 어긋난다.
+        cell = tk.Frame(grid, bg=BG,
+                        width=cell_px * span + _BLOCK_GAP_PX * (span - 1),
+                        height=cell_px * rows + _BLOCK_GAP_PX * (rows - 1))
         cell.pack_propagate(False)
-        cell.grid(row=r, column=c, columnspan=span,
+        cell.grid(row=r, column=c, columnspan=span, rowspan=rows,
                   padx=_BLOCK_GAP_PX // 2, pady=_BLOCK_GAP_PX // 2)
         _make_block_button(cell, blk, span).pack(fill="both", expand=True)
-        c += span
-        if c >= cols:
-            r += 1
-            c = 0
 
 
 # 블럭 종류별 배경색·기호 — 환경설정 미리보기(palette_ui._make_tile/_tile_text)와
@@ -571,9 +574,21 @@ _BLOCK_COLOR = {"char": CARD, "template": "#eef4ff",
                 "function": "#fff4e6", "form": "#eafaf1"}
 _BLOCK_PREFIX = {"template": "▦ ", "function": "ƒ ", "form": "📄 "}
 
-# 팔레트 한 칸의 한 변(px). 문자 블럭(1칸)이 이 크기의 정사각형이 된다.
-_BLOCK_CELL_PX = 26
+# 팔레트 한 칸의 한 변(px). 칸은 정사각형이고, **칸 수에 맞춰 크기가 변한다** —
+# 고정 크기로 두면 칸 수가 적을 때 오른쪽에 빈 공간이 크게 남는다.
+_BLOCK_CELL_MAX_PX = 34     # 칸 수가 적어도 이보다 크게는 안 키운다
+_BLOCK_CELL_MIN_PX = 16     # 칸 수가 많아도 이보다 작아지면 못 누른다
 _BLOCK_GAP_PX = 2
+_PAL_PAD_PX = 10            # 팔레트 좌우 여백 (pal_area 의 padx 와 같아야 한다)
+_PAL_MIN_WIDTH_PX = 380     # 폭을 아직 모를 때 쓸 하한
+
+
+def _adaptive_cell_px(avail_px, cols):
+    """쓸 수 있는 폭을 칸 수로 나눠 한 칸의 크기를 정한다 (정사각형)."""
+    if cols <= 0:
+        return _BLOCK_CELL_MAX_PX
+    size = (avail_px - _BLOCK_GAP_PX * cols) // cols
+    return max(_BLOCK_CELL_MIN_PX, min(_BLOCK_CELL_MAX_PX, size))
 
 
 def _block_label_max(span):

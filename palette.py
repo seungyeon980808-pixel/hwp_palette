@@ -27,7 +27,13 @@ import settings
 
 TABS_KEY = "palette_tabs"
 DEFAULT_FORMAT_KEY = "default_format"
-DEFAULT_COLS = 10       # 격자 가로 칸 수. 칸 하나는 정사각형(26px)이다.
+DEFAULT_COLS = 15       # 격자 가로 칸 수. 칸 크기는 폭에 맞춰 정해진다(정사각형).
+
+# 블럭은 격자 위의 사각형이다: (row, col) 에서 span×rows 칸을 차지한다.
+#   span = 가로 칸 수, rows = 세로 줄 수
+# 예전에는 좌표 없이 목록 순서대로 흘려 배치했는데, 그러면 '세로로 큰 블럭'을
+# 만들 수 없었다(줄을 건너뛰는 개념이 없으므로). 2026-07-19 좌표 방식으로 전환.
+BLOCK_POS_KEYS = ("row", "col", "span", "rows")
 
 DEFAULT_FORMAT = {
     "font": "함초롬바탕",
@@ -58,6 +64,8 @@ def load_tabs():
     for t in tabs:
         t.setdefault("cols", DEFAULT_COLS)
         t.setdefault("blocks", [])
+        if _migrate_positions(t):
+            migrated = True
         for b in t["blocks"]:
             b.setdefault("span", 2 if b.get("type") == "template" else 1)
             # 구 데이터: 템플릿을 '이름'으로 참조 → 고유 id(ref)로 이전.
@@ -68,6 +76,65 @@ def load_tabs():
     if migrated:
         save_tabs(tabs)
     return tabs
+
+
+def _migrate_positions(tab):
+    """구 데이터(좌표 없음)를 흐름 배치 순서 그대로 (row, col) 로 굳힌다.
+
+    예전에는 블럭 목록 순서대로 왼→오, 넘치면 다음 줄로 흘려 배치했다. 그 결과와
+    똑같이 보이도록 좌표를 매겨 두면, 사용자가 보던 배치가 그대로 유지된다.
+    반환: 바뀐 게 있으면 True.
+    """
+    blocks = tab.get("blocks", [])
+    if all("row" in b and "col" in b for b in blocks):
+        return False
+    cols = max(1, int(tab.get("cols", DEFAULT_COLS)))
+    r = c = 0
+    for b in blocks:
+        span = max(1, min(int(b.get("span", 1)), cols))
+        if c + span > cols:
+            r += 1
+            c = 0
+        b["row"], b["col"] = r, c
+        b["span"], b["rows"] = span, max(1, int(b.get("rows", 1)))
+        c += span
+        if c >= cols:
+            r += 1
+            c = 0
+    return True
+
+
+def occupied_cells(blocks, skip_index=None):
+    """블럭들이 차지한 칸 집합 {(row, col), ...}."""
+    used = set()
+    for i, b in enumerate(blocks):
+        if i == skip_index:
+            continue
+        r0, c0 = int(b.get("row", 0)), int(b.get("col", 0))
+        for dr in range(max(1, int(b.get("rows", 1)))):
+            for dc in range(max(1, int(b.get("span", 1)))):
+                used.add((r0 + dr, c0 + dc))
+    return used
+
+
+def area_is_free(blocks, row, col, span, rows, skip_index=None):
+    """그 사각형이 비어 있는가 (다른 블럭과 안 겹치는가)."""
+    used = occupied_cells(blocks, skip_index)
+    return all((row + dr, col + dc) not in used
+               for dr in range(rows) for dc in range(span))
+
+
+def find_free_spot(blocks, cols, span=1, rows=1, max_rows=200):
+    """span×rows 가 들어갈 첫 빈자리 (row, col). 못 찾으면 맨 아래 새 줄."""
+    used = occupied_cells(blocks)
+    for r in range(max_rows):
+        for c in range(cols - span + 1):
+            if all((r + dr, c + dc) not in used
+                   for dr in range(rows) for dc in range(span)):
+                return r, c
+    bottom = max((int(b.get("row", 0)) + int(b.get("rows", 1))
+                  for b in blocks), default=0)
+    return bottom, 0
 
 
 def _migrate_template_ref(block):
@@ -143,11 +210,48 @@ def set_tab_cols(index, cols):
 
 
 # ── 블럭 ───────────────────────────────────────────────
-def add_block(tab_index, block):
+def add_block(tab_index, block, row=None, col=None):
+    """블럭을 추가한다. 자리를 안 주면 첫 빈자리를 찾아 넣는다."""
     tabs = load_tabs()
-    if 0 <= tab_index < len(tabs):
-        tabs[tab_index]["blocks"].append(copy.deepcopy(block))
-        save_tabs(tabs)
+    if not (0 <= tab_index < len(tabs)):
+        return
+    tab = tabs[tab_index]
+    blocks = tab["blocks"]
+    b = copy.deepcopy(block)
+    b["span"] = max(1, int(b.get("span", 1)))
+    b["rows"] = max(1, int(b.get("rows", 1)))
+    if row is None or col is None:
+        row, col = find_free_spot(blocks, tab.get("cols", DEFAULT_COLS),
+                                  b["span"], b["rows"])
+    b["row"], b["col"] = int(row), int(col)
+    blocks.append(b)
+    save_tabs(tabs)
+
+
+def set_block_area(tab_index, block_index, row, col, span, rows):
+    """블럭의 자리·크기를 한 번에 정한다. 겹치면 아무것도 하지 않고 False."""
+    tabs = load_tabs()
+    if not (0 <= tab_index < len(tabs)):
+        return False
+    blocks = tabs[tab_index]["blocks"]
+    if not (0 <= block_index < len(blocks)):
+        return False
+    cols = tabs[tab_index].get("cols", DEFAULT_COLS)
+    span, rows = max(1, min(int(span), cols)), max(1, int(rows))
+    col = max(0, min(int(col), cols - span))
+    row = max(0, int(row))
+    if not area_is_free(blocks, row, col, span, rows, skip_index=block_index):
+        return False
+    b = blocks[block_index]
+    b["row"], b["col"], b["span"], b["rows"] = row, col, span, rows
+    save_tabs(tabs)
+    return True
+
+
+def grid_extent(blocks):
+    """블럭들이 쓰는 줄 수 (맨 아래 줄 + 1)."""
+    return max((int(b.get("row", 0)) + max(1, int(b.get("rows", 1)))
+                for b in blocks), default=0)
 
 
 def update_block(tab_index, block_index, block):
