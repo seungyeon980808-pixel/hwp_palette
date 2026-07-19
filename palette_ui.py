@@ -37,6 +37,13 @@ TYPE_LABEL = {"char": "문자", "template": "템플릿", "function": "서식 조
 TILE_LABEL_MAX = 12      # 격자 미리보기 타일에 넣을 수 있는 글자 수
 AUTO_NAME_MAX = 16       # 이름을 안 지었을 때 기능 이름들을 이어 붙이는 길이
 
+# 격자 한 칸 — 메인 창(main._BLOCK_CELL_PX)과 같은 크기여야 미리보기가 실물과 맞는다
+CELL_PX = 26
+CELL_GAP = 2
+EMPTY_ROWS_MIN = 3       # 블럭 아래에 항상 남겨 둘 빈 줄 (여기에 끌어 새 블럭을 만든다)
+EMPTY_BG = "#fbfbfd"     # 빈칸 배경
+RANGE_BG = "#d8e9ff"     # 끌어서 지정 중인 범위
+
 
 def _rgb_int(r, g, b):
     return r + (g << 8) + (b << 16)
@@ -199,6 +206,10 @@ class SettingsWindow(tk.Toplevel):
         self._drag_from = None
         self._drop_hint = None
         self._tile_map = {}
+        self._empty_map = {}
+        self._used_cells = set()
+        self._new_from = None      # 빈칸을 끌어 새 블럭 자리를 잡는 중
+        self._new_to = None
 
         tk.Label(self, text="환경설정", font=(FONT, 12, "bold"),
                  bg=BG, fg=TEXT).pack(anchor="w", padx=16, pady=(12, 2))
@@ -337,7 +348,8 @@ class SettingsWindow(tk.Toplevel):
         blocks = tab.get("blocks", [])
         cols = tab.get("cols", palette.DEFAULT_COLS)
         self.block_head.config(
-            text=f"'{tab['name']}'  ·  블럭 {len(blocks)}개  ·  타일을 끌어 옮기고, 눌러 선택")
+            text=f"'{tab['name']}'  ·  블럭 {len(blocks)}개  ·  "
+                 f"빈칸을 끌어 칸 수를 정하면 새 블럭, 타일을 끌면 자리 이동")
 
         # 상단 바: 칸 수 + 선택 블럭 동작
         bar = tk.Frame(self.block_area, bg=BG)
@@ -389,48 +401,129 @@ class SettingsWindow(tk.Toplevel):
         self._canvas = canvas
 
         for c in range(cols):
-            grid.columnconfigure(c, weight=1, uniform="cell")
+            grid.columnconfigure(c, minsize=CELL_PX + CELL_GAP, weight=0,
+                                 uniform="cell")
+
+        # ① 블럭이 어느 칸을 차지하는지 먼저 계산 (메인 창과 같은 흐름 배치)
+        layout, used = [], set()
         r = c = 0
         for i, blk in enumerate(blocks):
             span = min(int(blk.get("span", 1)), cols)
             if c + span > cols:
                 r += 1
                 c = 0
-            tile = self._make_tile(grid, i, blk)
-            tile.grid(row=r, column=c, columnspan=span, sticky="nsew",
-                      padx=1, pady=1)
-            tile.bind("<MouseWheel>", _wheel)
+            layout.append((r, c, span, i))
+            used.update((r, c + k) for k in range(span))
             c += span
             if c >= cols:
                 r += 1
                 c = 0
+        self._used_cells = used
+        last_row = max((rr for rr, *_ in layout), default=-1)
 
-        # 마지막 줄 뒤의 빈 칸 = '맨 뒤로 보내기' 놓는 자리 (드래그 대상)
-        self._tail_zone = tk.Frame(grid, bg=CARD, height=34,
-                                    highlightbackground=BORDER,
-                                    highlightthickness=1)
-        tk.Label(self._tail_zone, text="여기로 끌면 맨 뒤로", font=(FONT, 8),
-                 bg=CARD, fg=MUTED).pack(expand=True)
-        self._tail_zone.grid(row=r + 1, column=0, columnspan=cols,
-                             sticky="ew", padx=1, pady=(6, 2))
-        self._tail_zone.bind("<ButtonRelease-1>", self._on_release)
-        self._tail_zone.bind("<MouseWheel>", _wheel)
+        # ② 블럭 타일 (고정 크기 틀에 넣어 글자 길이가 칸을 늘리지 못하게)
+        for rr, cc, span, i in layout:
+            cell = tk.Frame(grid, bg=CARD, height=CELL_PX,
+                            width=CELL_PX * span + CELL_GAP * (span - 1))
+            cell.pack_propagate(False)
+            cell.grid(row=rr, column=cc, columnspan=span,
+                      padx=CELL_GAP // 2, pady=CELL_GAP // 2)
+            self._make_tile(cell, i, blocks[i], span).pack(fill="both", expand=True)
+            cell.bind("<MouseWheel>", _wheel)
+
+        # ③ 빈칸 — 여기를 끌어 칸 수를 정하면 새 블럭을 만든다
+        self._empty_map = {}
+        for rr in range(last_row + 1 + EMPTY_ROWS_MIN):
+            for cc in range(cols):
+                if (rr, cc) in used:
+                    continue
+                self._make_empty_cell(grid, rr, cc, _wheel)
 
     def _apply_cols(self):
         palette.set_tab_cols(self.sel_tab, self._cols_var.get())
         self._render_blocks()
         self._notify()
 
-    def _make_tile(self, parent, i, blk):
+    # ── 빈칸: 끌어서 새 블럭 자리 지정 ──
+    def _make_empty_cell(self, grid, r, c, wheel):
+        f = tk.Frame(grid, bg=EMPTY_BG, width=CELL_PX, height=CELL_PX,
+                     highlightbackground=BORDER, highlightthickness=1)
+        f.pack_propagate(False)
+        f.grid(row=r, column=c, padx=CELL_GAP // 2, pady=CELL_GAP // 2)
+        self._empty_map[str(f)] = (r, c)
+        f.bind("<ButtonPress-1>", lambda e, rc=(r, c): self._empty_press(rc))
+        f.bind("<B1-Motion>", self._empty_motion)
+        f.bind("<ButtonRelease-1>", self._empty_release)
+        f.bind("<MouseWheel>", wheel)
+        f.config(cursor="plus")
+        return f
+
+    def _empty_press(self, rc):
+        if self._drag_from is not None:
+            return                      # 타일을 옮기는 중 — 새 블럭 만들기가 아니다
+        self._new_from = self._new_to = rc
+        self._paint_range()
+
+    def _empty_motion(self, e):
+        if self._new_from is None:
+            return
+        w = e.widget.winfo_containing(e.x_root, e.y_root)
+        rc = self._empty_map.get(str(w))
+        # 같은 줄에서만 늘린다 (블럭은 줄을 넘어갈 수 없다)
+        if rc and rc[0] == self._new_from[0]:
+            self._new_to = rc
+            self._paint_range()
+
+    def _empty_release(self, e):
+        if self._drag_from is not None:
+            return self._on_release(e)  # 타일 옮기기는 기존 처리로
+        if self._new_from is None:
+            return
+        r = self._new_from[0]
+        c0, c1 = sorted((self._new_from[1], self._new_to[1]))
+        self._new_from = self._new_to = None
+        # 사이에 블럭이 끼어 있으면 거기서 끊는다
+        span = 1
+        while c0 + span <= c1 and (r, c0 + span) not in self._used_cells:
+            span += 1
+        self._render_blocks()           # 범위 표시 지우기
+        self._pick_tool(span)
+
+    def _paint_range(self):
+        """지금 끌고 있는 범위를 칠한다."""
+        r = self._new_from[0]
+        c0, c1 = sorted((self._new_from[1], self._new_to[1]))
+        for key, (rr, cc) in self._empty_map.items():
+            try:
+                w = self.nametowidget(key)
+            except Exception:
+                continue
+            inside = (rr == r and c0 <= cc <= c1)
+            w.config(bg=RANGE_BG if inside else EMPTY_BG)
+
+    def _pick_tool(self, span):
+        """칸 수를 정한 뒤 '무엇을 넣을지' 고른다."""
+        dlg = _ToolPickDialog(self, span)
+        self.wait_window(dlg)
+        if dlg.result == "char":
+            self._add_char(span)
+        elif dlg.result == "template":
+            self._add_template(span)
+        elif dlg.result == "function":
+            self._add_function(span)
+        elif dlg.result == "form":
+            self._add_form(span)
+
+    def _make_tile(self, parent, i, blk, span=1):
         selected = (self.sel_block == i)
         bg = {"char": CARD, "template": "#eef4ff", "function": "#fff4e6",
               "form": "#eafaf1"}.get(blk["type"], CARD)
-        tile = tk.Frame(parent, bg=bg, height=42,
+        tile = tk.Frame(parent, bg=bg,
                         highlightbackground=ACCENT if selected else BORDER,
                         highlightthickness=2 if selected else 1)
         tile.pack_propagate(False)
-        lab = tk.Label(tile, text=self._tile_text(blk), bg=bg, fg=TEXT,
-                       font=(FONT, 12 if blk["type"] == "char" else 9))
+        lab = tk.Label(tile, text=self._tile_text(blk, span), bg=bg, fg=TEXT,
+                       font=(FONT, 10 if blk["type"] == "char" else 8))
         lab.pack(expand=True)
         self._tiles[i] = tile
         for w in (tile, lab):
@@ -442,11 +535,17 @@ class SettingsWindow(tk.Toplevel):
             w.config(cursor="hand2")
         return tile
 
-    def _tile_text(self, blk):
-        pre = {"template": "▦ ", "function": "ƒ ", "form": "📄 "}.get(
-            blk["type"], "")
-        s = pre + self._block_label(blk)
-        return s if len(s) <= TILE_LABEL_MAX else s[:TILE_LABEL_MAX] + "…"
+    def _tile_text(self, blk, span=1):
+        """칸 수에 맞춰 자른다 — 메인 창(main._make_block_button)과 같은 규칙."""
+        name = self._block_label(blk)
+        if span <= 1 and blk["type"] != "char":
+            # 1칸엔 기호를 버리고 이름을 살린다 (종류는 배경색으로 구분)
+            s, limit = name, 2
+        else:
+            pre = {"template": "▦ ", "function": "ƒ ", "form": "📄 "}.get(
+                blk["type"], "")
+            s, limit = pre + name, 2 if span <= 1 else span * 2
+        return s if len(s) <= limit else s[:limit] + "…"
 
     def _block_label(self, blk):
         if blk["type"] == "char":
@@ -490,8 +589,8 @@ class SettingsWindow(tk.Toplevel):
             return
         under = self.winfo_containing(e.x_root, e.y_root)
         target = self._widget_to_index(under)
-        if target is None and self._is_tail_zone(under):
-            target = -1                      # 꼬리 영역
+        if target is None and self._is_empty_cell(under):
+            target = -1                      # 빈칸에 놓으면 맨 뒤로
         if target == self._drop_hint:
             return
         self._drop_hint = target
@@ -506,13 +605,7 @@ class SettingsWindow(tk.Toplevel):
                     tile.config(highlightbackground=BORDER, highlightthickness=1)
             except Exception:
                 pass
-        zone = getattr(self, "_tail_zone", None)
-        if zone is not None:
-            try:
-                zone.config(highlightbackground="#34c759" if target == -1 else BORDER,
-                            highlightthickness=3 if target == -1 else 1)
-            except Exception:
-                pass
+        # 빈칸은 강조하지 않는다 — 어디에 놓든 "맨 뒤"라 표시가 오히려 헷갈린다
 
     def _on_release(self, e):
         src = self._drag_from
@@ -522,8 +615,8 @@ class SettingsWindow(tk.Toplevel):
             return
         under = self.winfo_containing(e.x_root, e.y_root)
         target = self._widget_to_index(under)
-        if target is None and self._is_tail_zone(under):
-            # 빈 공간(꼬리 영역)에 놓으면 맨 뒤로 보낸다
+        if target is None and self._is_empty_cell(under):
+            # 빈칸에 놓으면 맨 뒤로 보낸다
             target = len(palette.load_tabs()[self.sel_tab]["blocks"]) - 1
         if target is not None and target != src:
             # 실제로 옮겼을 때만 재렌더 (더블클릭 경로를 막지 않기 위해)
@@ -532,21 +625,15 @@ class SettingsWindow(tk.Toplevel):
             self._render_blocks()
             self._notify()
 
-    def _is_tail_zone(self, widget):
-        zone = getattr(self, "_tail_zone", None)
-        if zone is None or widget is None:
-            return False
+    def _is_empty_cell(self, widget):
+        """그 위젯이 빈칸인가 (타일을 여기 놓으면 맨 뒤로 보낸다)."""
         w = widget
         for _ in range(4):
-            if w is zone:
+            if w is None:
+                return False
+            if str(w) in getattr(self, "_empty_map", {}):
                 return True
-            parent = w.winfo_parent()
-            if not parent:
-                break
-            try:
-                w = w.nametowidget(parent)
-            except Exception:
-                break
+            w = getattr(w, "master", None)
         return False
 
     def _widget_to_index(self, w):
@@ -638,7 +725,7 @@ class SettingsWindow(tk.Toplevel):
             return False
         return True
 
-    def _add_char(self):
+    def _add_char(self, span=1):
         if not self._need_tab():
             return
         prefill = ""
@@ -652,11 +739,12 @@ class SettingsWindow(tk.Toplevel):
             "문자/문구 블럭", "삽입할 문자나 문구 (한글에서 선택했다면 자동으로 채워집니다):",
             initialvalue=prefill, parent=self)
         if val:
-            palette.add_block(self.sel_tab, {"type": "char", "value": val, "span": 1})
+            palette.add_block(self.sel_tab,
+                              {"type": "char", "value": val, "span": span})
             self._render_blocks()
             self._notify()
 
-    def _add_template(self):
+    def _add_template(self, span=2):
         """템플릿 블럭 추가 — 지금 한글에서 바로 캡처하거나, 등록된 것에서 고른다."""
         if not self._need_tab():
             return
@@ -664,15 +752,15 @@ class SettingsWindow(tk.Toplevel):
         choice = _SourceDialog(self, has_registered=bool(items))
         self.wait_window(choice)
         if choice.result == "capture":
-            self._capture_template_here()
+            self._capture_template_here(span)
         elif choice.result == "registered":
             pick = _ChoiceDialog(self, "템플릿 선택", [it["name"] for it in items])
             self.wait_window(pick)
             if pick.result:
                 it = next(x for x in items if x["name"] == pick.result)
-                self._add_template_block(it)
+                self._add_template_block(it, span)
 
-    def _capture_template_here(self):
+    def _capture_template_here(self, span=2):
         """한글의 현재 선택(또는 커서가 든 표)을 그 자리에서 템플릿으로 등록 + 배치."""
         try:
             hwp_engine.connect()
@@ -715,27 +803,28 @@ class SettingsWindow(tk.Toplevel):
                 tmp.unlink(missing_ok=True)
             except OSError:
                 pass
-        self._add_template_block(library.find_by_id("템플릿", item_id))
+        self._add_template_block(library.find_by_id("템플릿", item_id), span)
 
-    def _add_template_block(self, item):
+    def _add_template_block(self, item, span=2):
         if not item:
             return
         palette.add_block(self.sel_tab, {"type": "template", "ref": item["id"],
-                                         "template": item["name"], "span": 2})
+                                         "template": item["name"], "span": span})
         self._render_blocks()
         self._notify()
 
-    def _add_function(self):
+    def _add_function(self, span=1):
         if not self._need_tab():
             return
         dlg = FunctionDialog(self)
         self.wait_window(dlg)
         if dlg.result:
+            dlg.result["span"] = span
             palette.add_block(self.sel_tab, dlg.result)
             self._render_blocks()
             self._notify()
 
-    def _add_form(self):
+    def _add_form(self, span=2):
         """양식 블럭 추가 — 라이브러리에 등록된 양식에서 고른다."""
         if not self._need_tab():
             return
@@ -752,7 +841,7 @@ class SettingsWindow(tk.Toplevel):
         if pick.result:
             it = next(x for x in items if x["name"] == pick.result)
             palette.add_block(self.sel_tab, {"type": "form", "ref": it["id"],
-                                             "form": it["name"], "span": 2})
+                                             "form": it["name"], "span": span})
             self._render_blocks()
             self._notify()
 
@@ -902,6 +991,54 @@ class _DefaultFormatDialog(tk.Toplevel):
             messagebox.showwarning("값 오류", "크기·줄간격·자간은 숫자여야 합니다.", parent=self)
             return
         palette.save_default_format(fmt)
+        self.destroy()
+
+
+class _ToolPickDialog(tk.Toplevel):
+    """빈칸을 끌어 칸 수를 정한 뒤 '무엇을 넣을지' 고르는 창."""
+
+    _TOOLS = [
+        ("char", "문자", "특수문자·자주 쓰는 문구를 커서 자리에 삽입"),
+        ("template", "템플릿", "표·결재란 등 문서 일부를 커서 자리에 꽂기"),
+        ("function", "서식 조합", "선택한 글자에 굵게·크기·자간 등을 한 번에"),
+        ("form", "양식", "hwp 파일 전체를 새 문서로 열기"),
+    ]
+
+    def __init__(self, master, span):
+        super().__init__(master)
+        self.result = None
+        self.title("어떤 도구를 넣을까요?")
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+
+        tk.Label(self, text=f"{span}칸짜리 자리에 넣을 도구",
+                 font=(FONT, 11, "bold"), bg=BG, fg=TEXT).pack(
+            anchor="w", padx=16, pady=(12, 2))
+        tk.Label(self, text="고르면 그 도구를 만드는 창이 이어서 열립니다.",
+                 font=(FONT, 8), bg=BG, fg=MUTED).pack(anchor="w", padx=16,
+                                                       pady=(0, 8))
+
+        body = tk.Frame(self, bg=BG, padx=16)
+        body.pack(fill="x")
+        for key, name, desc in self._TOOLS:
+            row = tk.Button(body, bg=CARD, bd=1, relief="solid", cursor="hand2",
+                            anchor="w", justify="left", padx=10, pady=6,
+                            text=f"{name}\n{desc}", font=(FONT, 9),
+                            fg=TEXT, activebackground=BORDER,
+                            command=lambda k=key: self._pick(k))
+            row.pack(fill="x", pady=2)
+
+        tk.Button(self, text="취소", command=self.destroy, font=(FONT, 9),
+                  bg="#e8e8ed", fg=TEXT, bd=0, padx=14, pady=5,
+                  cursor="hand2").pack(anchor="e", padx=16, pady=12)
+
+        self.update_idletasks()
+        self.geometry(f"+{master.winfo_rootx()+60}+{master.winfo_rooty()+80}")
+        self.grab_set()
+
+    def _pick(self, key):
+        self.result = key
         self.destroy()
 
 

@@ -635,8 +635,14 @@ def _add_tooltip(widget, text):
 
 
 def _make_block_button(parent, blk, span=1):
-    full = _BLOCK_PREFIX.get(blk.get("type"), "") + _block_label(blk)
-    limit = _block_label_max(span)
+    btype = blk.get("type")
+    name = _block_label(blk)
+    if span <= 1 and btype != "char":
+        # 1칸에는 기호와 이름을 같이 못 넣는다. 종류는 배경색으로 이미 구분되므로
+        # 기호(▦ ƒ 📄)를 버리고 이름을 살린다 — 'ƒ …' 보다 '굵게' 가 쓸모 있다.
+        full, limit = name, 2
+    else:
+        full, limit = _BLOCK_PREFIX.get(btype, "") + name, _block_label_max(span)
     label = full if len(full) <= limit else full[:limit] + "…"
     btn = tk.Button(parent, text=label,
                     command=lambda b=blk: run_palette_block(b),

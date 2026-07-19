@@ -27,7 +27,7 @@ import settings
 
 TABS_KEY = "palette_tabs"
 DEFAULT_FORMAT_KEY = "default_format"
-DEFAULT_COLS = 5
+DEFAULT_COLS = 10       # 격자 가로 칸 수. 칸 하나는 정사각형(26px)이다.
 
 DEFAULT_FORMAT = {
     "font": "함초롬바탕",
