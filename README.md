@@ -1,4 +1,4 @@
-# hwp_palette
+# HwpPalette
 
 **한글(HWP) 작업 중 "내가 필요한 것"만 골라 자동화하는 도구.**
 
