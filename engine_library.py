@@ -98,36 +98,64 @@ def apply_charshape_delta(delta):
 
 # ── 라이브러리: 템플릿(통째 캡처) ───────────────────────
 def auto_select_table_if_inside():
-    """커서가 표 안이면(선택 없이 클릭만 한 상태) 표 전체를 선택한다.
+    """커서가 표 안이면(선택 없이 클릭만 한 상태) 그 표를 개체로 선택한다.
 
-    탈출(Cancel+CloseEx)로 본문의 표 앵커 앞에 도달한 뒤 MoveSelRight로
-    앵커(글자 취급되는 표 1개)를 선택 — 실측 2026-07-15, 병합 표 재생 확인.
+    예전 방식(Cancel+CloseEx 로 본문에 나온 뒤 MoveSelRight)은 복잡한 문서에서
+    커서가 앵커 옆이 아닌 곳에 떨어져 **줄바꿈만 선택**되는 일이 있었다
+    (실측 2026-07-19: CloseEx 후 위치가 앵커와 무관한 (0,1,8), 양옆 선택 모두
+    '\\r\\n'). 커서가 속한 컨트롤을 ParentCtrl 로 직접 얻어 select_ctrl 로
+    선택하는 것이 위치 계산 없이 정확하다.
     반환: 선택 성공 여부.
     """
     hwp = _h()
-    act = hwp.HAction
     try:
         if hwp.GetPos()[0] == 0:
             return False        # 본문에 있음 — 표 안이 아님
     except Exception as e:
         applog.exc("표 안 여부 확인 실패", e)
         return False
-    act.Run("Cancel")
-    for _ in range(hwp_engine._MAX_NEST_DEPTH):
-        try:
-            if hwp.GetPos()[0] == 0:
-                break
-        except Exception as e:
-            applog.exc("표 탈출 중 위치 조회 실패", e)
+    try:
+        ctrl = hwp.ParentCtrl
+        if ctrl is None:
             return False
-        act.Run("CloseEx")
-    act.Run("MoveSelRight")
+        hwp.select_ctrl(ctrl)
+    except Exception as e:
+        applog.exc("표 선택 실패", e)
+        return False
     return has_selection()
 
 
 def capture_fragment(dest_path):
-    """현재 선택 영역을 통째로 조각 .hwp 파일로 저장한다(병합·서식 그대로)."""
-    _h().save_block_as(str(dest_path))
+    r"""현재 선택 영역을 통째로 조각 .hwp 파일로 저장한다(병합·서식 그대로).
+
+    방식: 복사 → 새 탭에 붙여넣기 → 그 문서를 통째로 저장 → 탭 닫기.
+
+    save_block_as(FileSaveBlock_S)를 쓰지 않는 이유 (실측 2026-07-19):
+      표를 **개체로 선택**한 상태(SelectionMode 4 — 표 테두리 클릭 등)에서
+      FileSaveBlock_S 는 선택만 저장하지 않고 **문서 전체를 저장**한다.
+      복잡한 문서에서 표 하나를 캡처했는데 다른 내용까지 다 들어가고,
+      그 비대한 조각을 삽입하면 한글이 멈추던 버그의 원인.
+      복사→붙여넣기는 선택 종류(글자 선택 1 / 개체 선택 4)와 무관하게
+      선택한 것만 정확히 담는다 (두 모드 모두 실측 확인).
+
+    부작용: 사용자의 클립보드가 캡처 내용으로 바뀐다 — 캡처 흐름에서는
+    read_selection_text 가 이미 Copy 를 쓰고 있어 추가 손해는 없다.
+    """
+    hwp = _h()
+    if not has_selection():
+        raise RuntimeError("캡처할 선택 영역이 없습니다")
+    hwp.HAction.Run("Copy")
+    saved = hwp.XHwpDocuments.Count
+    try:
+        hwp.XHwpDocuments.Add(1)          # 1 = 새 탭
+        hwp.HAction.Run("Paste")
+        hwp.save_as(str(dest_path), format="HWP")
+    finally:
+        try:
+            if hwp.XHwpDocuments.Count > saved:
+                hwp.XHwpDocuments.Active_XHwpDocument.Close(isDirty=False)
+        except Exception as e:
+            applog.exc("캡처용 임시 탭 닫기 실패 — 탭이 남아 있을 수 있음", e)
 
 
 def insert_fragment(path):
