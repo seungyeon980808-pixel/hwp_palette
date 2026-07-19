@@ -47,6 +47,39 @@ ROW_PREVIEW_MAX = 16     # 목록 행에 보여줄 내용 미리보기 길이
 AUTO_NAME_MAX = 10       # 문자 등록 시 내용에서 이름을 자동으로 뽑는 길이
 
 
+def ime_composing_text(widget):
+    r"""위젯에서 지금 조합 중인 IME 글자를 읽는다. 없으면 빈 문자열.
+
+    '기본문항'을 치는 동안 마지막 '항'은 확정 전까지 위젯에 없다 — IME 가
+    화면에만 그리고 있다. 위젯 값만 읽는 미리보기는 그래서 늘 한 글자 늦었다.
+    Windows IMM API(ImmGetCompositionStringW)로 조합 중인 문자열을 직접 물어봐서
+    위젯 값 뒤에 붙이면 미리보기가 실시간이 된다.
+
+    이 함수는 '보여주기' 전용이다. 저장은 여전히 commit_ime(조합 확정) 뒤의
+    위젯 값을 쓴다 — 조합 문자열은 '항' 이전에 'ㅎ','하' 같은 중간 상태도
+    지나가므로 저장 값으로는 못 쓴다.
+    """
+    try:
+        import ctypes
+        imm32 = ctypes.windll.imm32
+        GCS_COMPSTR = 0x0008
+        hwnd = widget.winfo_id()
+        himc = imm32.ImmGetContext(hwnd)
+        if not himc:
+            return ""
+        try:
+            nbytes = imm32.ImmGetCompositionStringW(himc, GCS_COMPSTR, None, 0)
+            if nbytes <= 0:
+                return ""
+            buf = ctypes.create_unicode_buffer(nbytes // 2 + 1)
+            imm32.ImmGetCompositionStringW(himc, GCS_COMPSTR, buf, nbytes)
+            return buf.value[:nbytes // 2]
+        finally:
+            imm32.ImmReleaseContext(hwnd, himc)
+    except Exception:
+        return ""       # 미리보기 보조일 뿐 — 실패해도 조용히 넘어간다
+
+
 def commit_ime(window):
     r"""한글 IME 로 조합 중인 글자를 확정시킨다. 값을 읽기 **직전에** 부른다.
 
@@ -171,9 +204,10 @@ class MetaDialog(tk.Toplevel):
         self._adv = tk.Frame(self, bg=BG, padx=16)
         tk.Label(self._adv, text="마크다운 라벨", font=(FONT, 9), bg=BG,
                  fg=TEXT).grid(row=0, column=0, sticky="w", pady=3)
-        tk.Entry(self._adv, textvariable=self.label_var, width=24,
-                 font=(FONT, 10), relief="solid", bd=1).grid(
-            row=0, column=1, pady=3, padx=(8, 0))
+        self.label_entry = tk.Entry(self._adv, textvariable=self.label_var,
+                                    width=24, font=(FONT, 10), relief="solid", bd=1)
+        self.label_entry.grid(row=0, column=1, pady=3, padx=(8, 0))
+        self.label_entry.bind("<KeyRelease>", lambda e: self._update_preview())
         tk.Label(self._adv, text="비우면 이름을 그대로 씁니다.",
                  font=(FONT, 7), bg=BG, fg=MUTED).grid(
             row=1, column=1, sticky="w", padx=(8, 0))
@@ -199,6 +233,7 @@ class MetaDialog(tk.Toplevel):
                   padx=16, pady=6, cursor="hand2").pack(side="right", padx=(0, 6))
 
         self._update_preview()
+        self._poll_preview()        # IME 조합 중 글자까지 실시간 반영
         self.update_idletasks()
         self.geometry(f"+{master.winfo_rootx()+40}+{master.winfo_rooty()+60}")
         self.grab_set()
@@ -212,11 +247,34 @@ class MetaDialog(tk.Toplevel):
             self._adv_btn.config(text="▾ 자세히 (라벨·분류)")
         self._adv_open = not self._adv_open
 
+    def _live_value(self, var, entry):
+        """위젯 값 + 그 칸에서 지금 조합 중인 IME 글자. 미리보기 전용."""
+        v = var.get()
+        try:
+            if entry is not None and self.focus_get() is entry:
+                v += ime_composing_text(entry)
+        except Exception:
+            pass                    # 미리보기 보조 — 실패해도 위젯 값은 보여준다
+        return v
+
     def _update_preview(self):
-        """문서에 어떻게 쓰는지 실물로 보여준다 (\\ 헷갈림 방지)."""
-        lab = library.normalize_label(self.label_var.get()) \
-            or library.normalize_label(self.name_var.get())
+        """문서에 어떻게 쓰는지 실물로 보여준다 (\\ 헷갈림 방지).
+
+        조합 중인 글자(ime_composing_text)까지 합쳐서 그린다 — 안 그러면
+        '기본문항'을 치는 동안 미리보기가 '기본문'에서 멈춰 한 글자 늦어 보인다.
+        """
+        lab = library.normalize_label(
+            self._live_value(self.label_var, getattr(self, "label_entry", None))) \
+            or library.normalize_label(
+                self._live_value(self.name_var, getattr(self, "name_entry", None)))
         self._preview.config(text=f"문서에 이렇게 쓰세요:  \\{lab}\\" if lab else "")
+
+    def _poll_preview(self):
+        """조합 상태는 이벤트만으로 다 못 잡아서(마우스로 후보 선택 등) 주기적으로도 그린다."""
+        if not self.winfo_exists():
+            return
+        self._update_preview()
+        self.after(150, self._poll_preview)
 
     def _ok(self):
         commit_ime(self)
