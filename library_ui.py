@@ -48,6 +48,23 @@ ROW_PREVIEW_MAX = 16     # 목록 행에 보여줄 내용 미리보기 길이
 AUTO_NAME_MAX = 10       # 문자 등록 시 내용에서 이름을 자동으로 뽑는 길이
 
 
+def commit_ime(window):
+    r"""한글 IME 로 조합 중인 글자를 확정시킨다. 값을 읽기 **직전에** 부른다.
+
+    '기본문'을 치는 도중 마지막 '문'은 IME 가 화면에만 그리고 있을 뿐, 위젯에는
+    아직 안 들어와 있다(실측 2026-07-19 — 위젯에 실제로 들어간 글자는 즉시
+    변수에 반영되는 것을 확인했으므로, 코드 순서 문제가 아니라 IME 조합 때문).
+    그 상태에서 값을 읽으면 '기본'만 저장된다.
+
+    포커스를 옮기면 조합이 확정되므로 한 번 옮겨 주고, 반영될 때까지 기다린다.
+    """
+    try:
+        window.focus_set()              # 입력칸 → 창 자체로 포커스 이동
+        window.update_idletasks()       # 확정 결과가 변수에 반영될 때까지
+    except Exception as e:
+        applog.exc("IME 조합 확정 실패 — 마지막 글자가 빠질 수 있음", e)
+
+
 def _ensure_hwp(parent):
     try:
         hwp_engine.connect()
@@ -131,6 +148,12 @@ class MetaDialog(tk.Toplevel):
         name_entry.grid(row=0, column=1, pady=3, padx=(8, 0))
         name_entry.focus_set()
         name_entry.bind("<Return>", lambda e: self._ok())
+        self.name_entry = name_entry
+        # 한글 IME 로 조합 중인 글자는 아직 위젯에 안 들어와 있어서 미리보기가
+        # 한 글자 뒤처져 보인다(실측). 조합이 끝나는 순간을 잡으려고 키를 뗄 때와
+        # 포커스가 빠질 때도 다시 그린다.
+        name_entry.bind("<KeyRelease>", lambda e: self._update_preview())
+        name_entry.bind("<FocusOut>", lambda e: self._update_preview())
 
         self.label_var = tk.StringVar(value=label)
         self.group_var = tk.StringVar(value=library.DEFAULT_GROUP)
@@ -197,6 +220,7 @@ class MetaDialog(tk.Toplevel):
         self._preview.config(text=f"문서에 이렇게 쓰세요:  \\{lab}\\" if lab else "")
 
     def _ok(self):
+        commit_ime(self)
         name = self.name_var.get().strip()
         if not name:
             messagebox.showwarning("이름 없음", "이름을 입력해주세요.", parent=self)
@@ -262,6 +286,7 @@ class TextInputDialog(tk.Toplevel):
         self.grab_set()
 
     def _ok(self):
+        commit_ime(self)                # 조합 중인 마지막 글자가 빠지지 않게
         self.result = self.text.get("1.0", "end-1c")
         self.destroy()
 

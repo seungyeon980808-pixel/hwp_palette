@@ -19,6 +19,7 @@ import library
 import func_catalog
 import hwp_engine
 import engine_library
+import library_ui                  # commit_ime (IME 조합 확정) 공용
 
 BG = "#f5f5f7"
 CARD = "#ffffff"
@@ -146,6 +147,8 @@ class FunctionDialog(tk.Toplevel):
         return None, None
 
     def _ok(self):
+        # 한글 IME 로 조합 중인 마지막 글자를 확정시킨다 (library_ui.commit_ime 설명 참고)
+        library_ui.commit_ime(self)
         name = self.name_var.get().strip()
         actions = []
         for key, (chk, f, var, _w) in self.rows.items():

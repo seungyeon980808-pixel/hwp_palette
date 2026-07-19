@@ -81,6 +81,60 @@ class FindLabelOwnerTest(unittest.TestCase):
         self.assertIsNone(library.find_label_owner(""))
 
 
+class MoveWhenFreeTest(unittest.TestCase):
+    r"""한글이 방금 저장한 조각 파일을 놓을 때까지 기다렸다 옮기는지.
+
+    증상: 템플릿 캡처 시
+      [WinError 32] 다른 프로세스가 파일을 사용 중이기 때문에 …
+    save_block_as 는 한글에게 저장을 '시키는' 것이라, 파이썬으로 제어가 돌아온
+    뒤에도 한글이 잠깐 핸들을 쥐고 있다.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.src = pathlib.Path(self.tmp.name) / "_tmp_123.hwp"
+        self.src.write_bytes(b"FRAGMENT")
+        self.dst = pathlib.Path(self.tmp.name) / "final.hwp"
+        # 테스트가 느려지지 않게 대기 간격을 줄인다
+        patcher = mock.patch.object(library, "_MOVE_DELAY", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_잠겨_있지_않으면_바로_옮긴다(self):
+        library._move_when_free(self.src, self.dst)
+        self.assertTrue(self.dst.exists())
+        self.assertFalse(self.src.exists())
+        self.assertEqual(self.dst.read_bytes(), b"FRAGMENT")
+
+    def test_잠깐_잠겨_있으면_기다렸다_옮긴다(self):
+        real = pathlib.Path.replace
+        calls = {"n": 0}
+
+        def flaky(self_, target):
+            calls["n"] += 1
+            if calls["n"] <= 3:            # 처음 세 번은 한글이 물고 있는 상황
+                raise PermissionError(32, "다른 프로세스가 파일을 사용 중")
+            return real(self_, target)
+
+        with mock.patch.object(pathlib.Path, "replace", flaky):
+            library._move_when_free(self.src, self.dst)
+        self.assertTrue(self.dst.exists())
+        self.assertEqual(calls["n"], 4)
+
+    def test_끝내_안_놓으면_복사로_물러선다(self):
+        """이름 바꾸기가 막혀도 읽기는 대개 열려 있다 → 등록은 성공해야 한다."""
+        def always_locked(self_, target):
+            raise PermissionError(32, "다른 프로세스가 파일을 사용 중")
+
+        with mock.patch.object(pathlib.Path, "replace", always_locked):
+            library._move_when_free(self.src, self.dst)
+        self.assertTrue(self.dst.exists())
+        self.assertEqual(self.dst.read_bytes(), b"FRAGMENT")
+        self.assertTrue(self.src.exists())      # 복사라 원본은 남는다(호출부가 지움)
+
+
 class LabelLookupTest(unittest.TestCase):
     r"""\라벨\ → 항목 조회. 중복 시 먼저 만난 것이 이긴다."""
 
