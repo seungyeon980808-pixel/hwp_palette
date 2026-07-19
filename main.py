@@ -349,12 +349,12 @@ def drag(e): root.geometry(
     f"+{root.winfo_x()+e.x-root._x}+{root.winfo_y()+e.y-root._y}")
 
 # 타이틀
-title = tk.Frame(root, bg=CARD, pady=10, padx=14)
+title = tk.Frame(root, bg=CARD, pady=5, padx=10)
 title.pack(fill="x")
 title.bind("<ButtonPress-1>", start_drag)
 title.bind("<B1-Motion>", drag)
 tk.Label(title, text="hwp_palette",
-         font=(FONT, 11, "bold"), fg=TEXT, bg=CARD).pack(side="left")
+         font=(FONT, 10, "bold"), fg=TEXT, bg=CARD).pack(side="left")
 tk.Label(title, text=f"v{VERSION}",
          font=(FONT, 8), fg=MUTED, bg=CARD).pack(side="left", padx=(6, 0))
 tk.Button(title, text="✕", command=root.destroy,
@@ -364,29 +364,29 @@ tk.Button(title, text="✕", command=root.destroy,
 tk.Frame(root, bg=BORDER, height=1).pack(fill="x")
 
 # 파일 버튼
-file_row = tk.Frame(root, bg=BG, padx=14, pady=10)
+file_row = tk.Frame(root, bg=BG, padx=10, pady=5)
 file_row.pack(fill="x")
 for label, cmd in [("📄 새 문서", fn_new), ("📂 열기", fn_open), ("💾 저장", fn_save)]:
     tk.Button(file_row, text=label, command=cmd,
-              font=(FONT, 9), fg=TEXT, bg=CARD,
-              activebackground=BORDER, bd=0, padx=12, pady=6,
+              font=(FONT, 8), fg=TEXT, bg=CARD,
+              activebackground=BORDER, bd=0, padx=5, pady=3,
               cursor="hand2").pack(side="left", padx=(0, 6))
 # 환경설정 / 양식 설정 / 라이브러리 버튼 — 오른쪽 끝
 tk.Button(file_row, text="⚙ 환경설정", command=lambda: fn_open_palette_settings(),
-          font=(FONT, 9), fg=TEXT, bg=CARD,
-          activebackground=BORDER, bd=0, padx=12, pady=6,
+          font=(FONT, 8), fg=TEXT, bg=CARD,
+          activebackground=BORDER, bd=0, padx=5, pady=3,
           cursor="hand2").pack(side="right")
 tk.Button(file_row, text="📐 양식", command=fn_open_settings,
-          font=(FONT, 9), fg=TEXT, bg=CARD,
-          activebackground=BORDER, bd=0, padx=12, pady=6,
+          font=(FONT, 8), fg=TEXT, bg=CARD,
+          activebackground=BORDER, bd=0, padx=5, pady=3,
           cursor="hand2").pack(side="right", padx=(0, 6))
 tk.Button(file_row, text="📚 라이브러리", command=lambda: fn_open_library(),
-          font=(FONT, 9), fg=TEXT, bg=CARD,
-          activebackground=BORDER, bd=0, padx=12, pady=6,
+          font=(FONT, 8), fg=TEXT, bg=CARD,
+          activebackground=BORDER, bd=0, padx=5, pady=3,
           cursor="hand2").pack(side="right", padx=(0, 6))
 
 # 안내 (접이식)
-guide_wrap = tk.Frame(root, bg=BG, padx=14, pady=4)
+guide_wrap = tk.Frame(root, bg=BG, padx=10, pady=1)
 guide_wrap.pack(fill="x")
 
 _guide_open = [False]
@@ -434,13 +434,13 @@ def _toggle_guide():
         _guide_open[0] = True
 
 guide_toggle = tk.Button(guide_wrap, text="ⓘ  마크다운 입력 형식 보기",
-          command=_toggle_guide, font=(FONT, 9), fg=ACCENT, bg=BG,
+          command=_toggle_guide, font=(FONT, 8), fg=ACCENT, bg=BG,
           activebackground=BG, activeforeground=ACCENT, bd=0,
-          padx=2, pady=4, cursor="hand2", anchor="w")
+          padx=2, pady=1, cursor="hand2", anchor="w")
 guide_toggle.pack(fill="x")
 
 # 문항 번호
-num_row = tk.Frame(root, bg=BG, padx=14, pady=4)
+num_row = tk.Frame(root, bg=BG, padx=10, pady=1)
 num_row.pack(fill="x")
 num_use = tk.BooleanVar(value=True)
 num_var = tk.IntVar(value=1)
@@ -451,11 +451,11 @@ def _toggle_num():
     num_reset.config(state=state)
 
 tk.Checkbutton(num_row, text="문항 번호 사용", variable=num_use,
-               command=_toggle_num, font=(FONT, 9), fg=TEXT, bg=BG,
+               command=_toggle_num, font=(FONT, 8), fg=TEXT, bg=BG,
                activebackground=BG, selectcolor=CARD,
                cursor="hand2").pack(side="left", padx=(0,8))
 num_spin = tk.Spinbox(num_row, from_=1, to=100, textvariable=num_var,
-           width=4, font=(FONT, 10), justify="center",
+           width=3, font=(FONT, 9), justify="center",
            relief="flat", bg=CARD, fg=TEXT, buttonbackground=CARD,
            highlightbackground=BORDER, highlightthickness=1)
 num_spin.pack(side="left")
@@ -465,36 +465,36 @@ num_reset = tk.Button(num_row, text="초기화", command=lambda: num_var.set(1),
 num_reset.pack(side="left", padx=(6,0))
 
 # 고정 버튼 2개: 마크다운 변환 / 기본 서식으로 변환 (+ 사진)
-btn_area = tk.Frame(root, bg=BG, padx=14, pady=8)
+btn_area = tk.Frame(root, bg=BG, padx=10, pady=4)
 btn_area.pack(fill="x")
 tk.Button(btn_area, text="마크다운 변환  (Ctrl+T)",
           command=fn_convert,
-          font=(FONT, 12, "bold"), fg="white", bg=ACCENT,
+          font=(FONT, 10, "bold"), fg="white", bg=ACCENT,
           activebackground="#0077ed", activeforeground="white",
-          bd=0, pady=10, cursor="hand2").pack(fill="x")
+          bd=0, pady=5, cursor="hand2").pack(fill="x")
 sub_btn = tk.Frame(btn_area, bg=BG)
-sub_btn.pack(fill="x", pady=(6, 0))
+sub_btn.pack(fill="x", pady=(4, 0))
 tk.Button(sub_btn, text="↺ 기본 서식으로 변환", command=fn_reset_format,
-          font=(FONT, 9, "bold"), fg=TEXT, bg=YELLOW,
-          activebackground=BORDER, bd=0, pady=7,
+          font=(FONT, 8, "bold"), fg=TEXT, bg=YELLOW,
+          activebackground=BORDER, bd=0, pady=4,
           cursor="hand2").pack(side="left", fill="x", expand=True, padx=(0, 4))
 tk.Button(sub_btn, text="🖼 사진", command=fn_pick_photo,
-          font=(FONT, 9), fg=TEXT, bg=CARD, activebackground=BORDER,
-          bd=1, padx=12, pady=7, cursor="hand2").pack(side="left")
+          font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
+          bd=1, padx=7, pady=4, cursor="hand2").pack(side="left")
 tk.Button(sub_btn, text="📝 양식 채우기", command=fn_open_form_fill,
-          font=(FONT, 9), fg=TEXT, bg=CARD, activebackground=BORDER,
-          bd=1, padx=12, pady=7, cursor="hand2").pack(side="left", padx=(4, 0))
+          font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
+          bd=1, padx=7, pady=4, cursor="hand2").pack(side="left", padx=(4, 0))
 
 # ── 커스텀 팔레트 (탭 + 블럭) ──────────────────────────
-tk.Frame(root, bg=BORDER, height=1).pack(fill="x", padx=14, pady=(8, 0))
+tk.Frame(root, bg=BORDER, height=1).pack(fill="x", padx=10, pady=(4, 0))
 
 _pal_state = {"tab": 0}
 
-pal_tabbar = tk.Frame(root, bg=BG, padx=14)
-pal_tabbar.pack(fill="x", pady=(8, 0))
+pal_tabbar = tk.Frame(root, bg=BG, padx=10)
+pal_tabbar.pack(fill="x", pady=(4, 0))
 
-pal_area = tk.Frame(root, bg=BG, padx=14, pady=4)
-pal_area.pack(fill="x", pady=(2, 6))
+pal_area = tk.Frame(root, bg=BG, padx=10, pady=2)
+pal_area.pack(fill="x", pady=(1, 3))
 
 
 def _select_pal_tab(i):
@@ -520,13 +520,13 @@ def render_palette():
     # 탭 버튼들 + ⚙
     for i, t in enumerate(tabs):
         active = i == cur
-        tk.Button(pal_tabbar, text=t["name"], font=(FONT, 9, "bold"),
+        tk.Button(pal_tabbar, text=t["name"], font=(FONT, 8, "bold"),
                   bg=ACCENT if active else CARD, fg="white" if active else TEXT,
-                  bd=0, padx=10, pady=5, cursor="hand2",
+                  bd=0, padx=7, pady=2, cursor="hand2",
                   command=lambda idx=i: _select_pal_tab(idx)).pack(side="left", padx=(0, 3))
     tk.Button(pal_tabbar, text="⚙", font=(FONT, 9),
               command=lambda: fn_open_palette_settings(),
-              bg=CARD, fg=MUTED, bd=0, padx=8, pady=5,
+              bg=CARD, fg=MUTED, bd=0, padx=6, pady=2,
               cursor="hand2").pack(side="right")
 
     # 블럭 그리드
@@ -549,7 +549,7 @@ def render_palette():
             r += 1
             c = 0
         _make_block_button(grid, blk).grid(
-            row=r, column=c, columnspan=span, sticky="ew", padx=2, pady=2)
+            row=r, column=c, columnspan=span, sticky="ew", padx=1, pady=1)
         c += span
         if c >= cols:
             r += 1
@@ -618,9 +618,9 @@ def _make_block_button(parent, blk):
              else full[:_BLOCK_LABEL_MAX] + "…")
     btn = tk.Button(parent, text=label,
                     command=lambda b=blk: run_palette_block(b),
-                    font=(FONT, 10), fg=TEXT,
+                    font=(FONT, 9), fg=TEXT,
                     bg=_BLOCK_COLOR.get(blk.get("type"), CARD),
-                    activebackground=BORDER, bd=1, relief="solid", pady=6,
+                    activebackground=BORDER, bd=1, relief="solid", pady=1,
                     cursor="hand2")
     if label != full:
         _add_tooltip(btn, full)
