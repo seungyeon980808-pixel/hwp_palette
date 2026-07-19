@@ -305,6 +305,35 @@ def count_slots_in_file(path):
             applog.exc("빈칸 세기용 임시 문서 닫기 실패 — 창이 남아 있을 수 있음", e)
 
 
+def close_stale_temp_docs():
+    r"""한글에 열린 채 남아 있는 _tmp_*.hwp 문서를 닫는다.
+
+    구버전의 실패한 캡처가 한글에 임시 문서를 열어둔 채 남겼다(실측 2026-07-19).
+    한글이 문서로 붙들고 있는 동안은 디스크에서 지울 수 없으므로, 먼저 그 문서를
+    닫아 준다. 그러면 다음에 cleanup_temp_fragments 가 파일을 지울 수 있다.
+    반환: 닫은 문서 수.
+    """
+    hwp = _h()
+    closed = 0
+    try:
+        docs = hwp.XHwpDocuments
+        # 닫으면 인덱스가 밀리므로 뒤에서 앞으로 훑는다
+        for i in range(docs.Count - 1, -1, -1):
+            try:
+                name = docs.Item(i).FullName or ""
+            except Exception:
+                continue
+            if "_tmp_" in name and name.lower().endswith(".hwp"):
+                try:
+                    docs.Item(i).Close(isDirty=False)
+                    closed += 1
+                except Exception as e:
+                    applog.exc(f"임시 문서 닫기 실패 — {name}", e)
+    except Exception as e:
+        applog.exc("임시 문서 정리 중 오류", e)
+    return closed
+
+
 def export_as_hwpx(src_path, dst_path):
     """.hwp/.hwpx 를 HWPX 로 저장한다. 반환: 성공 여부.
 

@@ -81,58 +81,56 @@ class FindLabelOwnerTest(unittest.TestCase):
         self.assertIsNone(library.find_label_owner(""))
 
 
-class MoveWhenFreeTest(unittest.TestCase):
-    r"""한글이 방금 저장한 조각 파일을 놓을 때까지 기다렸다 옮기는지.
+class CaptureDirectSaveTest(unittest.TestCase):
+    r"""조각을 최종 위치에 '바로' 저장하는지 (WinError 32 회피).
 
-    증상: 템플릿 캡처 시
-      [WinError 32] 다른 프로세스가 파일을 사용 중이기 때문에 …
-    save_block_as 는 한글에게 저장을 '시키는' 것이라, 파이썬으로 제어가 돌아온
-    뒤에도 한글이 잠깐 핸들을 쥐고 있다.
+    예전엔 _tmp_*.hwp 로 저장 후 이름을 바꿨는데, 한글이 그 파일을 물고 있어
+    이름 바꾸기가 [WinError 32] 로 터졌다. 이제 save_to(목적지) 로 넘겨
+    처음부터 최종 경로에 저장하므로 바꿀 일이 없다.
     """
 
     def setUp(self):
         import tempfile
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.src = pathlib.Path(self.tmp.name) / "_tmp_123.hwp"
-        self.src.write_bytes(b"FRAGMENT")
-        self.dst = pathlib.Path(self.tmp.name) / "final.hwp"
-        # 테스트가 느려지지 않게 대기 간격을 줄인다
-        patcher = mock.patch.object(library, "_MOVE_DELAY", 0)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        root = pathlib.Path(self.tmp.name)
+        self.frag = root / "fragments"
+        self.frag.mkdir()
+        for p in (mock.patch.object(library, "LIBRARY_PATH", root / "library.json"),
+                  mock.patch.object(library, "FRAGMENTS_DIR", self.frag)):
+            p.start()
+            self.addCleanup(p.stop)
 
-    def test_잠겨_있지_않으면_바로_옮긴다(self):
-        library._move_when_free(self.src, self.dst)
-        self.assertTrue(self.dst.exists())
-        self.assertFalse(self.src.exists())
-        self.assertEqual(self.dst.read_bytes(), b"FRAGMENT")
+    def test_목적지에_바로_저장한다(self):
+        saved_to = {}
 
-    def test_잠깐_잠겨_있으면_기다렸다_옮긴다(self):
-        real = pathlib.Path.replace
-        calls = {"n": 0}
+        def save_to(dest):
+            saved_to["path"] = dest
+            dest.write_bytes(b"FRAG")
 
-        def flaky(self_, target):
-            calls["n"] += 1
-            if calls["n"] <= 3:            # 처음 세 번은 한글이 물고 있는 상황
-                raise PermissionError(32, "다른 프로세스가 파일을 사용 중")
-            return real(self_, target)
+        library.add_template_from_capture("표", save_to, slot_count=2)
+        # 저장 함수가 받은 경로가 곧 최종 위치 (임시 이름이 아니다)
+        self.assertEqual(saved_to["path"].parent, self.frag)
+        self.assertFalse(saved_to["path"].name.startswith("_tmp_"))
+        item = library.list_items("템플릿")[0]
+        self.assertTrue((self.frag / item["file"]).exists())
+        self.assertEqual(item["slot_count"], 2)
 
-        with mock.patch.object(pathlib.Path, "replace", flaky):
-            library._move_when_free(self.src, self.dst)
-        self.assertTrue(self.dst.exists())
-        self.assertEqual(calls["n"], 4)
+    def test_저장이_안_되면_등록하지_않고_알린다(self):
+        # save_to 가 파일을 안 만들면 (캡처 실패) 예외를 올린다
+        with self.assertRaises(RuntimeError):
+            library.add_template_from_capture("표", lambda dest: None)
+        self.assertEqual(library.list_items("템플릿"), [])
 
-    def test_끝내_안_놓으면_복사로_물러선다(self):
-        """이름 바꾸기가 막혀도 읽기는 대개 열려 있다 → 등록은 성공해야 한다."""
-        def always_locked(self_, target):
-            raise PermissionError(32, "다른 프로세스가 파일을 사용 중")
-
-        with mock.patch.object(pathlib.Path, "replace", always_locked):
-            library._move_when_free(self.src, self.dst)
-        self.assertTrue(self.dst.exists())
-        self.assertEqual(self.dst.read_bytes(), b"FRAGMENT")
-        self.assertTrue(self.src.exists())      # 복사라 원본은 남는다(호출부가 지움)
+    def test_구버전_임시파일을_청소한다(self):
+        (self.frag / "_tmp_111.hwp").write_bytes(b"x")
+        (self.frag / "_tmp_222.hwp").write_bytes(b"x")
+        keep = self.frag / "abc123.hwp"
+        keep.write_bytes(b"real")
+        library.cleanup_temp_fragments()
+        self.assertFalse((self.frag / "_tmp_111.hwp").exists())
+        self.assertFalse((self.frag / "_tmp_222.hwp").exists())
+        self.assertTrue(keep.exists())          # 진짜 조각은 안 건드린다
 
 
 class LabelLookupTest(unittest.TestCase):

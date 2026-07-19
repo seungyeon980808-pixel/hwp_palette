@@ -44,7 +44,6 @@ VERSION = "1.3.0"
 RELEASE_DATE = "2026-07-05"
 
 import pathlib
-import time
 import tkinter as tk
 from tkinter import messagebox, filedialog
 
@@ -74,6 +73,9 @@ print(f"{'='*45}")
 
 # ── 활성 양식 프리셋 로드 (시작 시 + 설정 저장 시) ──────
 hwp_engine.set_active_spec(settings.get_active_spec())
+
+# 구버전이 남긴 _tmp_*.hwp 찌꺼기 청소 (WinError 32 로 실패했던 캡처의 잔재)
+library.cleanup_temp_fragments()
 
 
 def on_settings_saved(spec):

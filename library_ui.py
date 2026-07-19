@@ -11,7 +11,6 @@
 """
 
 import pathlib
-import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -595,22 +594,23 @@ class LibraryManager(tk.Toplevel):
         if not meta.result:
             return
         name, label, group = meta.result
-        library.FRAGMENTS_DIR.mkdir(exist_ok=True)
-        tmp_path = library.FRAGMENTS_DIR / f"_tmp_{int(time.time()*1000)}.hwp"
+        # 조각을 최종 위치에 '바로' 저장한다 — 임시 이름으로 저장 후 이름을 바꾸면
+        # 한글이 그 파일을 물고 있어 WinError 32 가 났다(2026-07-19). save_to 로
+        # 넘기면 library 가 uuid 경로를 만들어 여기에 직접 저장시킨다.
         try:
-            engine_library.capture_fragment(tmp_path)
-            library.add_template_from_capture(name, tmp_path, label=label,
-                                              group=group, slot_count=slot_count)
+            library.add_template_from_capture(
+                name, engine_library.capture_fragment, label=label,
+                group=group, slot_count=slot_count)
         except Exception as e:
+            applog.exc("템플릿 캡처 실패", e)
             messagebox.showerror("캡처 실패", str(e), parent=self)
             return
-        finally:
-            # 실패 시 임시 조각이 fragments/ 에 쌓이지 않게 정리
-            # (add_template_from_capture 가 성공했으면 이미 옮겨져 없음)
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+        # 구버전이 한글에 열어둔 _tmp 문서가 있으면 닫고 디스크에서도 청소
+        try:
+            engine_library.close_stale_temp_docs()
+            library.cleanup_temp_fragments()
+        except Exception as e:
+            applog.exc("임시 파일 청소 실패 (무해)", e)
         self._refresh("템플릿")
         self._notify()
 

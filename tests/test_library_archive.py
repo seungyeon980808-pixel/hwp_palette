@@ -34,11 +34,15 @@ class ArchiveRoundTripTest(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def _seed_template(self, name="결재란", label=None):
-        """조각 파일을 가진 템플릿 하나를 등록한다."""
-        src = pathlib.Path(self.tmp.name) / "src.hwp"
-        src.write_bytes(b"HWP-FRAGMENT-BYTES")
+        """조각 파일을 가진 템플릿 하나를 등록한다.
+
+        add_template_from_capture 는 이제 '목적지에 저장하는 함수'를 받는다
+        (한글이 파일을 물어 이름 바꾸기가 실패하던 WinError 32 회피).
+        테스트에서는 더미 바이트를 그 자리에 써 주는 함수를 넘긴다.
+        """
         return library.add_template_from_capture(
-            name, src, label=label, slot_count=2)
+            name, lambda dest: dest.write_bytes(b"HWP-FRAGMENT-BYTES"),
+            label=label, slot_count=2)
 
     def _export_all(self):
         dest = pathlib.Path(self.tmp.name) / "out.zip"

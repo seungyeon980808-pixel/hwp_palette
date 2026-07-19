@@ -15,7 +15,6 @@ import copy
 import json
 import pathlib
 import shutil
-import time
 import uuid
 
 import applog
@@ -38,38 +37,22 @@ def _ensure_dirs():
     FRAGMENTS_DIR.mkdir(exist_ok=True)
 
 
-# 한글이 방금 저장한 파일을 놓을 때까지 기다리는 한도 (0.05초 × 40 = 최대 2초)
-_MOVE_RETRIES = 40
-_MOVE_DELAY = 0.05
+def cleanup_temp_fragments():
+    r"""예전 방식이 남긴 _tmp_*.hwp 찌꺼기를 지운다.
 
-
-def _move_when_free(src, dst):
-    r"""한글이 파일을 놓을 때까지 기다렸다가 옮긴다.
-
-    왜 필요한가 (실측 2026-07-19):
-      조각 저장은 `save_block_as` → 한글에게 'FileSaveBlock_S' 액션을 **시키는** 것이다.
-      파이썬으로 제어가 돌아온 뒤에도 한글이 잠깐 그 파일의 핸들을 쥐고 있어서,
-      곧바로 이름을 바꾸면 터진다:
-        [WinError 32] 다른 프로세스가 파일을 사용 중이기 때문에 …
-      사용자가 '캡처 실패'로 겪은 오류가 이것이다. 별거 안 하고 있어도 나는 이유는
-      우리 쪽이 너무 빨라서지 뭘 잘못해서가 아니다.
-
-    잠깐씩 기다리며 다시 시도하고, 끝내 안 되면 복사로 물러선다 — 이름 바꾸기는
-    막혀도 읽기는 대개 열려 있기 때문. 남은 임시 파일은 호출부의 finally 가 지운다.
+    구버전은 임시 이름으로 저장 후 이름을 바꿨는데, 그 과정이 WinError 32 로
+    실패하면 _tmp_*.hwp 가 fragments/ 에 쌓였다(한글에 열린 채 남기도 했다).
+    지금은 임시 파일을 아예 안 쓰므로, 남아 있던 것만 조용히 청소한다.
+    한글이 아직 물고 있는 파일은 못 지우지만, 그건 그대로 두면 된다(무해).
     """
-    src, dst = pathlib.Path(src), pathlib.Path(dst)
-    last = None
-    for attempt in range(_MOVE_RETRIES):
-        try:
-            src.replace(dst)
-            if attempt:
-                applog.info(f"조각 파일 이동 성공 ({attempt + 1}번째 시도) — {dst.name}")
-            return
-        except PermissionError as e:        # WinError 32
-            last = e
-            time.sleep(_MOVE_DELAY)
-    applog.warn(f"조각 파일 이동이 계속 막혀 복사로 대체합니다 — {last}")
-    shutil.copy2(str(src), str(dst))        # 이것마저 실패하면 예외를 그대로 올린다
+    try:
+        for f in FRAGMENTS_DIR.glob("_tmp_*.hwp"):
+            try:
+                f.unlink()
+            except OSError:
+                pass        # 한글이 아직 열고 있는 것 — 다음 기회에
+    except OSError:
+        pass
 
 
 DEFAULT_GROUP = "기본"
@@ -182,18 +165,31 @@ def add_char(name, text, label=None, group=None):
     return item["id"]
 
 
-def add_template_from_capture(name, fragment_src_path, label=None, group=None,
+def add_template_from_capture(name, save_to, label=None, group=None,
                               slot_count=0):
-    r"""fragment_src_path의 조각 파일을 fragments/ 아래 고유 파일명으로 옮겨 등록.
+    r"""템플릿을 등록한다. 조각을 **최종 위치에 바로 저장**하는 방식.
 
-    slot_count: 빈칸(\) 개수 — 변환 시 아랫줄들이 위에서부터 순서대로 들어간다.
+    save_to: 함수. 목적지 경로(pathlib.Path)를 받아 그 자리에 조각을 저장한다.
+      예) lambda p: engine_library.capture_fragment(p)
+
+    왜 '바로 저장'인가 (실측 2026-07-19):
+      예전엔 _tmp_*.hwp 로 저장한 뒤 uuid 이름으로 **바꿨다**. 그런데 한글은
+      캡처 과정에서 그 파일을 문서로 열어 붙들 때가 있고, **한 번 연 파일은
+      문서를 닫아도 잠금을 놓지 않는다**(실측). 그래서 이름 바꾸기가
+      [WinError 32] 로 터졌다.
+      → 처음부터 최종 이름으로 저장하면 바꿀 일이 없어 이 오류가 원천적으로 사라진다.
+      (최종 이름으로 바로 저장하면 한글이 그 파일을 열지도 않는 것을 확인)
+
     반환: 등록된 항목의 고유 id.
     """
     _ensure_dirs()
     data = load()
     item = _meta(_unique_name(data["템플릿"], name), label, group)
     fname = f"{uuid.uuid4().hex}.hwp"
-    _move_when_free(fragment_src_path, FRAGMENTS_DIR / fname)
+    dest = FRAGMENTS_DIR / fname
+    save_to(dest)
+    if not dest.exists():
+        raise RuntimeError("조각 저장에 실패했습니다 (파일이 생성되지 않음)")
     item["file"] = fname
     item["slot_count"] = int(slot_count or 0)
     data["템플릿"].append(item)
@@ -241,23 +237,30 @@ def update_item(category, item_id, name=None, label=None, group=None):
     return True
 
 
-def replace_template_fragment(item_id, fragment_src_path, slot_count=None):
-    """템플릿의 조각 파일만 새로 캡처한 것으로 교체 (id·이름·라벨 유지)."""
+def replace_template_fragment(item_id, save_to, slot_count=None):
+    """템플릿의 조각 파일만 새로 캡처한 것으로 교체 (id·이름·라벨 유지).
+
+    save_to: 목적지 경로를 받아 조각을 저장하는 함수
+             (add_template_from_capture 와 같은 방식 — WinError 32 회피).
+    """
     data = load()
     target = next((it for it in data["템플릿"] if it.get("id") == item_id), None)
     if target is None:
         return False
     old = FRAGMENTS_DIR / target["file"]
     fname = f"{uuid.uuid4().hex}.hwp"
-    _move_when_free(fragment_src_path, FRAGMENTS_DIR / fname)
+    dest = FRAGMENTS_DIR / fname
+    save_to(dest)
+    if not dest.exists():
+        raise RuntimeError("조각 저장에 실패했습니다 (파일이 생성되지 않음)")
     target["file"] = fname
     if slot_count is not None:
         target["slot_count"] = int(slot_count)
     save(data)
     try:
         old.unlink(missing_ok=True)
-    except OSError:
-        pass
+    except OSError as e:
+        applog.exc(f"이전 조각 파일 삭제 실패 (남아 있어도 무해) — {old.name}", e)
     return True
 
 
