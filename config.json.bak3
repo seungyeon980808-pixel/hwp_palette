@@ -370,7 +370,7 @@
         },
         {
           "type": "char",
-          "value": "테스트",
+          "value": "→",
           "span": 1,
           "rows": 1,
           "row": 0,

@@ -129,6 +129,21 @@
   ],
   "palette_tabs": [
     {
+      "name": "템플릿",
+      "cols": 15,
+      "blocks": [
+        {
+          "type": "template",
+          "template": "3배열보기",
+          "span": 2,
+          "ref": "ec5837c41d264866a7f0db80d7d89e16",
+          "row": 0,
+          "col": 0,
+          "rows": 1
+        }
+      ]
+    },
+    {
       "name": "문자표",
       "cols": 15,
       "blocks": [
@@ -366,29 +381,6 @@
           "ref": "ec5837c41d264866a7f0db80d7d89e16",
           "row": 5,
           "col": 7,
-          "rows": 1
-        },
-        {
-          "type": "char",
-          "value": "테스트",
-          "span": 1,
-          "rows": 1,
-          "row": 0,
-          "col": 10
-        }
-      ]
-    },
-    {
-      "name": "템플릿",
-      "cols": 15,
-      "blocks": [
-        {
-          "type": "template",
-          "template": "3배열보기",
-          "span": 2,
-          "ref": "ec5837c41d264866a7f0db80d7d89e16",
-          "row": 0,
-          "col": 0,
           "rows": 1
         }
       ]

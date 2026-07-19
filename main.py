@@ -551,6 +551,10 @@ GUIDE_TEXT = (
     "  템플릿 속 빈칸 \\ 에 위에서부터 순서대로 채워집니다.\n"
     "  (비울 칸에는 '-' 한 줄)\n"
     "\n"
+    "■ 단축키\n"
+    "  Ctrl+T  마크다운 변환      Ctrl+K  찾기(블럭·라이브러리)\n"
+    "  Ctrl+1~9  지금 탭의 1~9번째 블럭 실행 (위→아래, 왼→오 순서)\n"
+    "\n"
     "※ 변환할 부분을 드래그 → 마크다운 변환 (Ctrl+T)\n"
     "※ 되돌리기: 한글 창에서 Ctrl+Z. 템플릿 삽입·변환은 여러 동작이 묶여\n"
     "   있어 여러 번 눌러야 완전히 돌아갑니다. (되돌리기는 한글이 하는 것이라\n"
@@ -857,6 +861,118 @@ tk.Label(root, text=f"v{VERSION} · {RELEASE_DATE}",
 tk.Label(root, text="만든이 박승연 · © 2026 · 자유 소프트웨어 (AGPL-3.0)",
          font=_font(7), fg=MUTED, bg=BG).pack(pady=(0, 8))
 
+def _pos_on_screen(x, y):
+    """그 위치가 지금 화면 안인가 — 모니터를 뺐을 때 창이 사라지는 것 방지."""
+    return (-50 <= x <= root.winfo_screenwidth() - 100
+            and -20 <= y <= root.winfo_screenheight() - 80)
+
+
+def _reading_order(blocks):
+    """블럭을 눈으로 읽는 순서(위→아래, 왼→오)로 정렬. 단축키 번호의 기준."""
+    return sorted(blocks, key=lambda b: (int(b.get("row", 0)),
+                                         int(b.get("col", 0))))
+
+
+# ── 통합 검색 (UI 제안 8) ───────────────────────────────
+def _search_targets():
+    """검색 대상 [(분류, 이름, 실행함수), ...] — 블럭·라이브러리·내장 문자."""
+    out = []
+    for tab in palette.load_tabs():
+        for blk in tab.get("blocks", []):
+            name = _block_label(blk)
+            if name:
+                out.append((f"블럭·{tab['name']}", name,
+                            lambda b=blk: run_palette_block(b)))
+    for label, (cat, item) in library.label_lookup().items():
+        if cat == "문자":
+            out.append(("문자", f"{label}  →  {item.get('text', '')}",
+                        lambda t=item.get("text", ""): _insert_text(t)))
+        elif cat == "사진":
+            out.append(("사진", label, None))
+        else:
+            out.append((cat, label, None))
+    return out
+
+
+def _insert_text(text):
+    if not ensure_hwp():
+        return
+    try:
+        hwp_engine.insert_plain(text)
+        notify("ok", f"삽입: {text[:20]}")
+    except Exception as e:
+        report_error("삽입 실패", e)
+
+
+def _open_search():
+    """Ctrl+K — 블럭·라이브러리를 한 창에서 찾아 Enter 로 실행."""
+    win = tk.Toplevel(root)
+    win.title("찾기")
+    win.configure(bg=BG)
+    win.attributes("-topmost", True)
+    win.geometry(f"+{root.winfo_rootx() + 20}+{root.winfo_rooty() + 60}")
+
+    targets = _search_targets()
+    var = tk.StringVar()
+    ent = tk.Entry(win, textvariable=var, font=_font(11), width=34,
+                   relief="solid", bd=1)
+    ent.pack(padx=12, pady=(12, 6))
+    ent.focus_set()
+    listbox = tk.Listbox(win, width=44, height=12, font=_font(9),
+                         relief="solid", bd=1, activestyle="none",
+                         selectbackground=ACCENT, selectforeground="white")
+    listbox.pack(padx=12, pady=(0, 6))
+    tk.Label(win, text="Enter 실행 · ↑↓ 이동 · Esc 닫기", font=_font(7),
+             bg=BG, fg=MUTED).pack(pady=(0, 10))
+
+    shown = []
+
+    def refresh(*_a):
+        q = var.get().strip().lower()
+        listbox.delete(0, tk.END)
+        shown.clear()
+        for cat, name, run in targets:
+            if q and q not in name.lower() and q not in cat.lower():
+                continue
+            shown.append((cat, name, run))
+            listbox.insert(tk.END, f"[{cat}] {name}")
+            if len(shown) >= 60:
+                break
+        if shown:
+            listbox.selection_set(0)
+
+    def run(_e=None):
+        sel = listbox.curselection()
+        if not sel:
+            return
+        cat, name, fn = shown[sel[0]]
+        win.destroy()
+        if fn is None:
+            notify("info", f"{cat} '{name}' 은(는) 팔레트 블럭이나 "
+                           "\\라벨\\ 변환으로 씁니다")
+        else:
+            fn()
+
+    def move(delta):
+        if not shown:
+            return
+        cur = listbox.curselection()
+        i = (cur[0] if cur else 0) + delta
+        i = max(0, min(i, len(shown) - 1))
+        listbox.selection_clear(0, tk.END)
+        listbox.selection_set(i)
+        listbox.see(i)
+
+    var.trace_add("write", refresh)
+    ent.bind("<Return>", run)
+    ent.bind("<Down>", lambda e: move(1))
+    ent.bind("<Up>", lambda e: move(-1))
+    listbox.bind("<Double-Button-1>", run)
+    win.bind("<Escape>", lambda e: win.destroy())
+    refresh()
+    return win
+
+
 def _poll_connection():
     """연결 표시등 갱신 — 2초마다. 연결을 새로 만들지는 않는다."""
     try:
@@ -880,12 +996,51 @@ def _tip(widget, text):
 
 _poll_connection()
 
-# 단축키: Ctrl+T = 마크다운 변환
+# ── 단축키 ──────────────────────────────────────────────
 root.bind_all("<Control-t>", lambda e: fn_convert())
 root.bind_all("<Control-T>", lambda e: fn_convert())
+root.bind_all("<Control-k>", lambda e: _open_search())
+root.bind_all("<Control-K>", lambda e: _open_search())
 
+
+def _run_nth_block(n):
+    """Ctrl+1~9 — 지금 탭의 n번째 블럭 실행 (UI 제안 9).
+
+    같은 블럭을 수십 번 누르는 조판 작업에서 마우스 왕복을 없앤다.
+    '지금 보는 탭' 기준이라, 탭을 바꾸면 같은 숫자가 다른 블럭이 된다.
+    """
+    tabs = [t for t in palette.load_tabs()
+            if t.get("name") != palette.MAIN_TAB]
+    if not tabs:
+        return
+    cur = min(_pal_state["tab"], len(tabs) - 1)
+    blocks = _reading_order(tabs[cur].get("blocks", []))
+    if n <= len(blocks):
+        run_palette_block(blocks[n - 1])
+    else:
+        notify("info", f"이 탭에는 {n}번째 블럭이 없습니다")
+
+
+for _i in range(1, 10):
+    root.bind_all(f"<Control-Key-{_i}>", lambda e, n=_i: _run_nth_block(n))
+
+# ── 창 위치 기억 (UI 제안 15) ───────────────────────────
 root.update_idletasks()
-sw = root.winfo_screenwidth()
-ww = root.winfo_width()
-root.geometry(f"+{sw - ww - 20}+80")
+_saved_pos = settings.get_window_pos()
+if _saved_pos and _pos_on_screen(*_saved_pos):
+    root.geometry(f"+{_saved_pos[0]}+{_saved_pos[1]}")
+else:
+    root.geometry(f"+{root.winfo_screenwidth() - root.winfo_width() - 20}+80")
+
+
+def _remember_pos():
+    """창을 닫을 때 위치를 기억한다 — 멀티 모니터에서 매번 옮기지 않게."""
+    try:
+        settings.set_window_pos(root.winfo_x(), root.winfo_y())
+    except Exception as e:
+        applog.exc("창 위치 저장 실패", e)
+    root.destroy()
+
+
+root.protocol("WM_DELETE_WINDOW", _remember_pos)
 root.mainloop()

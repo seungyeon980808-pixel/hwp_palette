@@ -235,6 +235,10 @@ class SettingsWindow(tk.Toplevel):
                                    selectbackground=ACCENT, selectforeground="white")
         self.tab_list.pack()
         self.tab_list.bind("<<ListboxSelect>>", self._on_tab_select)
+        # 탭 순서를 끌어서 바꾼다 (UI 제안 14) — 블럭은 드래그인데 탭만 ▲▼ 버튼인
+        # 관성 불일치를 없앤다. ▲▼ 버튼도 그대로 둔다(키보드/정밀 조작용).
+        self.tab_list.bind("<B1-Motion>", self._on_tab_drag)
+        self.tab_list.bind("<ButtonRelease-1>", lambda e: setattr(self, "_tab_drag_from", None))
         tb = tk.Frame(left, bg=BG)
         tb.pack(fill="x", pady=4)
         for txt, cmd in [("+", self._add_tab), ("이름", self._rename_tab),
@@ -354,6 +358,17 @@ class SettingsWindow(tk.Toplevel):
             self.sel_tab = max(0, self.sel_tab - 1)
             self._reload_tabs()
             self._notify()
+
+    def _on_tab_drag(self, e):
+        """목록에서 탭을 끌어 순서를 바꾼다. 한 칸씩 따라 움직인다."""
+        tabs = palette.load_tabs()
+        if len(tabs) < 2:
+            return
+        target = self.tab_list.nearest(e.y)
+        if not (0 <= target < len(tabs)) or target == self.sel_tab:
+            return
+        step = 1 if target > self.sel_tab else -1
+        self._move_tab(step)        # 한 칸씩 — 여러 칸을 건너뛰면 어지럽다
 
     def _move_tab(self, delta):
         palette.move_tab(self.sel_tab, delta)
@@ -670,6 +685,7 @@ class SettingsWindow(tk.Toplevel):
         self._set_selection(idx)
         m = tk.Menu(self, tearoff=0)
         m.add_command(label="편집  (더블클릭)", command=lambda: self._edit_block(idx))
+        m.add_command(label="복제", command=lambda: self._duplicate(idx))
         m.add_command(label="색 바꾸기", command=lambda: self._recolor(idx))
         m.add_command(label="기본색으로", command=lambda: self._recolor(idx, reset=True))
         m.add_separator()
@@ -680,6 +696,16 @@ class SettingsWindow(tk.Toplevel):
         m.add_separator()
         m.add_command(label="삭제", command=self._del_selected)
         m.tk_popup(e.x_root, e.y_root)
+
+    def _duplicate(self, idx):
+        """블럭 복제 (UI 제안 13) — 비슷한 서식 조합을 처음부터 다시 안 만들게."""
+        blocks = palette.load_tabs()[self.sel_tab]["blocks"]
+        copy_blk = dict(blocks[idx])
+        for k in ("row", "col"):
+            copy_blk.pop(k, None)       # 자리는 첫 빈자리로 다시 잡는다
+        palette.add_block(self.sel_tab, copy_blk)
+        self._render_blocks()
+        self._notify()
 
     def _recolor(self, idx, reset=False):
         """블럭 배경색을 바꾸거나(색 선택) 종류 기본색으로 되돌린다."""

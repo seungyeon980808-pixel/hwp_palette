@@ -261,6 +261,7 @@ CONFIG_KEY_OWNERS = {
     "quick_buttons": "settings",
     "photo_dir": "settings",
     "ui_scale": "settings",
+    "window_pos": "settings",
     "palette_tabs": "palette",
     "default_format": "palette",
 }
@@ -287,6 +288,22 @@ def get_ui_scale():
 
 def set_ui_scale(v):
     set_config_value("ui_scale", 1.3 if float(v) > 1.15 else 1.0)
+
+
+# ── 창 위치 기억 (UI 제안 15) ───────────────────────────
+def get_window_pos():
+    """마지막 창 위치 (x, y). 저장된 적이 없으면 None."""
+    v = get_config_value("window_pos", None)
+    if isinstance(v, (list, tuple)) and len(v) == 2:
+        try:
+            return int(v[0]), int(v[1])
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def set_window_pos(x, y):
+    set_config_value("window_pos", [int(x), int(y)])
 
 
 def get_config_value(key, default=None):
