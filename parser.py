@@ -276,22 +276,30 @@ def _try_style_span(text, i, lookup, warnings, style, depth):
 
 
 def _try_label(text, i, lookup, warnings):
-    r"""text[i] 부터 `\라벨\` 을 읽는다. 아니면 None. 반환: (다음 위치, 넣을 글자)"""
+    r"""text[i] 부터 `\라벨\` 을 읽는다. 아니면 None.
+
+    반환: (다음 위치, ('text', 넣을 글자)) 또는 (다음 위치, ('image', 경로)).
+    '사진' 항목은 library._photo_lookup() 이 사진 폴더에서 만들어 준다 —
+    \실험사진1\ 처럼 등록 없이 파일 이름만으로 그림을 부른다.
+    """
     m = LIB_TOKEN_RE.match(text, i)
     if not m:
         return None
     label = m.group(1).strip()
     entry = lookup.get(label)
     if entry and entry[0] == '문자':
-        return m.end(), entry[1]['text']
+        return m.end(), ('text', entry[1]['text'])
+    if entry and entry[0] == '사진':
+        return m.end(), ('image', entry[1]['path'])
     # 아래는 전부 '원문 그대로 두고 경고' — 사용자가 눈으로 보고 고칠 수 있게
     if entry and entry[0] in ('템플릿', '양식'):
         warnings.append(f"{entry[0]} 라벨은 한 줄에 단독으로 써주세요: \\{label}\\")
     elif entry and entry[0] == '서식':
         warnings.append(f"서식은 적용할 내용이 필요합니다: \\{label}{{내용}} 처럼 써주세요")
     else:
-        warnings.append(f"등록되지 않은 라벨: \\{label}\\")
-    return m.end(), m.group(0)
+        warnings.append(f"등록되지 않은 라벨: \\{label}\\ "
+                        f"(라이브러리·내장 문자·사진 폴더 어디에도 없습니다)")
+    return m.end(), ('text', m.group(0))
 
 
 def _parse_inline(text, i, lookup, warnings, style, depth, stop_at_brace):
@@ -330,8 +338,13 @@ def _parse_inline(text, i, lookup, warnings, style, depth, stop_at_brace):
                 continue
             lab = _try_label(text, i, lookup, warnings)
             if lab:
-                end, txt = lab
-                buf.append(txt)
+                end, (kind, value) = lab
+                if kind == 'image':
+                    flush()
+                    segs.append({"text": "", "style": dict(style) if style else None,
+                                 "image": value})
+                else:
+                    buf.append(value)
                 i = end
                 continue
             buf.append(ch)                  # 홑 \ = 템플릿 빈칸 표시. 그대로 둔다
@@ -349,17 +362,19 @@ def _parse_inline(text, i, lookup, warnings, style, depth, stop_at_brace):
 
 
 def build_segments(line, lookup, warnings):
-    """한 줄 → 조각 목록. 서식이 없으면 조각 하나짜리 목록이 된다."""
+    """한 줄 → 조각 목록. 서식·사진이 없으면 조각 하나짜리 목록이 된다."""
     segs, _ = _parse_inline(line, 0, lookup, warnings, None, 0,
                             stop_at_brace=False)
-    return [s for s in segs if s["text"]]
+    return [s for s in segs if s["text"] or s.get("image")]
 
 
 def _replace_char_tokens(line, lookup, warnings):
-    r"""템플릿 빈칸에 넣을 값 — 서식은 못 쓰고 글자만 남긴다."""
+    r"""템플릿 빈칸에 넣을 값 — 서식·사진은 못 쓰고 글자만 남긴다."""
     segs = build_segments(line, lookup, warnings)
     if any(s["style"] for s in segs):
         warnings.append("빈칸에 넣는 줄에는 서식을 쓸 수 없어 무시했습니다")
+    if any(s.get("image") for s in segs):
+        warnings.append("빈칸에 넣는 줄에는 사진을 넣을 수 없어 무시했습니다")
     return "".join(s["text"] for s in segs)
 
 
@@ -406,10 +421,10 @@ def build_library_plan(text, lookup):
                 i = j
                 continue
         segs = build_segments(lines[i], lookup, warnings)
-        if any(s["style"] for s in segs):
+        if any(s["style"] or s.get("image") for s in segs):
             ops.append(('rich_line', segs))
         else:
-            # 서식이 없으면 굳이 조각으로 나눠 넣을 필요가 없다 (COM 호출 절약)
+            # 서식·사진이 없으면 굳이 조각으로 나눠 넣을 필요가 없다 (COM 호출 절약)
             ops.append(('line', "".join(s["text"] for s in segs)))
         i += 1
     return ops, warnings

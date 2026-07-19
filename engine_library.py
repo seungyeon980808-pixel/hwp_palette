@@ -619,6 +619,16 @@ def insert_rich_line(segments):
             applog.exc("서식 감싸기: 원래 서식을 못 읽음 — 감싼 뒤 서식이 번질 수 있음", e)
 
     for seg in segments:
+        image = seg.get("image")
+        if image:
+            # \사진이름\ — 사진 폴더의 그림을 글자처럼 삽입.
+            # embedded=True 라 문서에 포함된다(원본 폴더를 지워도 그림은 남음).
+            try:
+                hwp.insert_picture(str(image), treat_as_char=True, embedded=True)
+            except Exception as e:
+                applog.exc(f"사진 삽입 실패 ({image}) — 자리 표시 텍스트로 대체", e)
+                insert_plain(f"[사진 실패: {image}]")
+            continue
         text = seg.get("text") or ""
         if not text:
             continue

@@ -19,6 +19,7 @@ import hwp_engine
 import engine_library
 import library
 import builtin_chars
+import settings
 
 BG = "#f5f5f7"
 CARD = "#ffffff"
@@ -410,6 +411,17 @@ class LibraryManager(tk.Toplevel):
                   font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
                   bd=1, padx=8, pady=4, cursor="hand2").pack(side="left", padx=(6, 0))
 
+        # 사진 폴더 — \사진이름\ 으로 그림을 부르는 폴더 (등록 없이 파일 이름으로)
+        photo_row = tk.Frame(self, bg=BG, padx=16)
+        photo_row.pack(fill="x", pady=(6, 0))
+        tk.Button(photo_row, text="🖼 사진 폴더", command=self._pick_photo_dir,
+                  font=(FONT, 8), fg=TEXT, bg=CARD, activebackground=BORDER,
+                  bd=1, padx=8, pady=4, cursor="hand2").pack(side="left")
+        self.photo_dir_lbl = tk.Label(photo_row, font=(FONT, 8), bg=BG, fg=MUTED,
+                                      anchor="w")
+        self.photo_dir_lbl.pack(side="left", padx=(8, 0), fill="x", expand=True)
+        self._refresh_photo_dir_label()
+
         tk.Frame(self, bg=BORDER, height=1).pack(fill="x", padx=16, pady=(10, 6))
 
         self.list_area = tk.Frame(self, bg=BG, padx=16)
@@ -741,6 +753,29 @@ class LibraryManager(tk.Toplevel):
             library.delete_item(cat, item["id"])
             self._refresh(cat)
             self._notify()
+
+    # ── 사진 폴더 (\사진이름\ 변환) ─────────────────────
+    def _refresh_photo_dir_label(self):
+        d = settings.get_photo_dir()
+        if d:
+            self.photo_dir_lbl.config(
+                text=f"{d} — 문서에 \\파일이름\\ 으로 부르면 그림이 들어갑니다")
+        else:
+            self.photo_dir_lbl.config(
+                text="(연결 안 됨) 폴더를 연결하면 \\파일이름\\ 으로 그림을 넣을 수 있습니다")
+
+    def _pick_photo_dir(self):
+        cur = settings.get_photo_dir()
+        path = filedialog.askdirectory(
+            parent=self, title="사진 폴더 선택 (취소하면 연결 해제 여부를 묻습니다)",
+            initialdir=cur or None)
+        if path:
+            settings.set_photo_dir(path)
+        elif cur and messagebox.askyesno(
+                "연결 해제", "사진 폴더 연결을 해제할까요?\n"
+                f"(현재: {cur})", parent=self):
+            settings.set_photo_dir("")
+        self._refresh_photo_dir_label()
 
     # ── 내보내기 / 가져오기 (개선안 30) ────────────────
     def _export_tab(self):

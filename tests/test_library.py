@@ -160,5 +160,64 @@ class LabelLookupTest(unittest.TestCase):
         self.assertEqual(out["원1"][1]["text"], "내가정한값")
 
 
+class PhotoLookupTest(unittest.TestCase):
+    r"""사진 폴더 → \파일이름\ 라벨."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = pathlib.Path(self.tmp.name)
+        import settings
+        patcher = mock.patch.object(settings, "get_photo_dir",
+                                    return_value=str(self.dir))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _touch(self, name):
+        (self.dir / name).write_bytes(b"IMG")
+
+    def test_이미지_파일만_라벨이_된다(self):
+        self._touch("실험사진1.png")
+        self._touch("메모.txt")            # 이미지가 아니므로 제외
+        out = library._photo_lookup()
+        self.assertIn("실험사진1", out)
+        self.assertNotIn("메모", out)
+        cat, item = out["실험사진1"]
+        self.assertEqual(cat, "사진")
+        self.assertTrue(item["path"].endswith("실험사진1.png"))
+
+    def test_폴더_미설정이면_빈_결과(self):
+        import settings
+        with mock.patch.object(settings, "get_photo_dir", return_value=""):
+            self.assertEqual(library._photo_lookup(), {})
+
+    def test_없는_폴더면_빈_결과(self):
+        import settings
+        with mock.patch.object(settings, "get_photo_dir",
+                               return_value=str(self.dir / "없는폴더")):
+            self.assertEqual(library._photo_lookup(), {})
+
+    def test_같은_이름의_png와_jpg면_하나만(self):
+        self._touch("사진.png")
+        self._touch("사진.jpg")
+        out = library._photo_lookup()
+        self.assertEqual(len(out), 1)
+
+    def test_label_lookup_에서_등록_항목이_사진을_이긴다(self):
+        self._touch("인사말.png")
+        data = _fake_data(문자=[{"id": "A", "name": "인사말", "label": "인사말",
+                                 "text": "안녕"}])
+        with mock.patch.object(library, "load", return_value=data):
+            out = library.label_lookup()
+        self.assertEqual(out["인사말"][0], "문자")      # 사진이 아니라 등록 항목
+
+    def test_label_lookup_에_사진이_병합된다(self):
+        self._touch("실험사진1.png")
+        with mock.patch.object(library, "load", return_value=_fake_data()):
+            out = library.label_lookup()
+        self.assertEqual(out["실험사진1"][0], "사진")
+
+
 if __name__ == "__main__":
     unittest.main()

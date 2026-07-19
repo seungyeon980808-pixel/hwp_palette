@@ -257,9 +257,20 @@ CONFIG_KEY_OWNERS = {
     "profiles": "settings",
     "active_profile": "settings",
     "quick_buttons": "settings",
+    "photo_dir": "settings",
     "palette_tabs": "palette",
     "default_format": "palette",
 }
+
+
+# ── 사진 폴더 (\사진이름\ 변환용) ──────────────────────
+def get_photo_dir():
+    """등록된 사진 폴더 경로 문자열. 없으면 빈 문자열."""
+    return (get_config_value("photo_dir", "") or "").strip()
+
+
+def set_photo_dir(path):
+    set_config_value("photo_dir", (path or "").strip())
 
 
 def get_config_value(key, default=None):

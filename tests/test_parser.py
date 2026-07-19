@@ -339,5 +339,71 @@ class StyleSpanTest(unittest.TestCase):
         self.assertFalse(md_parser.has_library_tokens("그냥 문장"))
 
 
+class PhotoLabelTest(unittest.TestCase):
+    r"""\사진이름\ — 사진 폴더 파일을 라벨로 부르기."""
+
+    def setUp(self):
+        self.lookup = _lookup(
+            인사말=("문자", {"text": "안녕하세요"}),
+            굵게=("서식", {"fields": {"굵게": True}}),
+        )
+        self.lookup["실험사진1"] = ("사진", {"name": "실험사진1",
+                                            "path": r"C:\photos\실험사진1.png"})
+
+    def _plan(self, text):
+        return md_parser.build_library_plan(text, self.lookup)
+
+    def test_사진_라벨은_image_조각이_된다(self):
+        ops, warns = self._plan("앞 \\실험사진1\\ 뒤")
+        self.assertEqual(warns, [])
+        self.assertEqual(ops[0][0], "rich_line")
+        segs = ops[0][1]
+        self.assertEqual(segs[0]["text"], "앞 ")
+        self.assertEqual(segs[1].get("image"), r"C:\photos\실험사진1.png")
+        self.assertEqual(segs[2]["text"], " 뒤")
+
+    def test_사진만_한_줄이어도_된다(self):
+        ops, _ = self._plan("\\실험사진1\\")
+        self.assertEqual(ops[0][0], "rich_line")
+        self.assertEqual(ops[0][1][0].get("image"), r"C:\photos\실험사진1.png")
+
+    def test_문자와_사진을_한_줄에_섞는다(self):
+        ops, _ = self._plan("\\인사말\\ \\실험사진1\\")
+        segs = ops[0][1]
+        self.assertEqual(segs[0]["text"], "안녕하세요 ")
+        self.assertTrue(segs[1].get("image"))
+
+    def test_서식_안의_사진도_넣을_수_있다(self):
+        # \굵게{...} 안의 사진 — 사진엔 서식이 안 먹지만 글자엔 먹어야 한다
+        ops, _ = self._plan("\\굵게{제목 \\실험사진1\\}")
+        segs = ops[0][1]
+        self.assertEqual(segs[0]["style"], {"굵게": True})
+        self.assertTrue(segs[1].get("image"))
+
+    def test_사진_단독_줄은_빈칸_채우기를_끝내고_따로_삽입된다(self):
+        # 라벨 단독 줄은 '다음 라벨 시작'으로 취급하는 기존 규칙 그대로
+        lookup = dict(self.lookup)
+        lookup["결재란"] = ("템플릿", {"name": "결재란", "slot_count": 2,
+                                       "file": "a.hwp"})
+        ops, _ = md_parser.build_library_plan(
+            "\\결재란\\\n담당\n\\실험사진1\\", lookup)
+        self.assertEqual(ops[0][0], "template")
+        self.assertEqual(ops[0][2], ["담당"])       # 사진 줄에서 채우기가 끊김
+        self.assertEqual(ops[1][0], "rich_line")     # 사진은 따로 삽입
+        self.assertTrue(ops[1][1][0].get("image"))
+
+    def test_빈칸_채우기_줄에_글자와_섞인_사진은_경고하고_무시(self):
+        lookup = dict(self.lookup)
+        lookup["결재란"] = ("템플릿", {"name": "결재란", "slot_count": 1,
+                                       "file": "a.hwp"})
+        _, warns = md_parser.build_library_plan(
+            "\\결재란\\\n이름 \\실험사진1\\ 옆", lookup)
+        self.assertTrue(any("사진을 넣을 수 없어" in w for w in warns))
+
+    def test_어디에도_없는_라벨_경고에_사진_폴더가_언급된다(self):
+        _, warns = self._plan("\\없는것\\")
+        self.assertIn("사진 폴더", warns[0])
+
+
 if __name__ == "__main__":
     unittest.main()

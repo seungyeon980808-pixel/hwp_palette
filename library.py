@@ -287,10 +287,43 @@ def find_label_owner(label, exclude_id=None):
     return None
 
 
+# 사진 폴더에서 라벨로 인정하는 확장자 (탐색 순서이기도 하다)
+PHOTO_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp")
+
+
+def _photo_lookup():
+    r"""사진 폴더의 파일들 → {파일이름(확장자 뺀): ("사진", {"path": 전체경로})}.
+
+    \실험사진1\ 처럼 등록 없이 파일 이름만으로 부르기 위한 것. 하위 폴더는
+    뒤지지 않는다 — 이름 충돌과 속도 문제를 피하려는 의도적 제한.
+    """
+    import settings                     # 순환 참조는 아니나 소유권 규칙상 여기서만 조회
+    photo_dir = settings.get_photo_dir()
+    if not photo_dir:
+        return {}
+    root = pathlib.Path(photo_dir)
+    if not root.is_dir():
+        applog.warn(f"사진 폴더가 없습니다: {photo_dir} — \\사진이름\\ 변환이 안 됩니다")
+        return {}
+    out = {}
+    try:
+        for f in sorted(root.iterdir()):
+            if f.is_file() and f.suffix.lower() in PHOTO_EXTS:
+                stem = f.stem.strip()
+                if stem and stem not in out:    # 같은 이름의 png/jpg 가 있으면 먼저 온 것
+                    out[stem] = ("사진", {"name": stem, "label": stem,
+                                          "path": str(f)})
+    except OSError as e:
+        applog.exc(f"사진 폴더를 읽지 못함 ({photo_dir})", e)
+    return out
+
+
 def label_lookup():
     """{라벨: (분류명, 항목)} — 마크다운 변환용.
 
-    사용자 등록 항목이 내장 문자보다 우선(같은 라벨이면 사용자 것이 이김).
+    우선순위: 사용자 등록 항목 > 내장 문자 > 사진 폴더 파일.
+    (같은 라벨이면 위가 이긴다 — 사진 파일 이름이 우연히 등록 라벨과 겹쳐도
+    등록한 것이 동작해야 예측 가능하다)
     같은 라벨이 둘 이상이면 먼저 만난 것이 이기고, 나머지는 로그에 남긴다
     (등록 시점에 이미 경고하지만, 구 데이터에는 그 경고를 못 받은 항목이 있다).
     """
@@ -317,6 +350,10 @@ def label_lookup():
                 out[lab] = ("문자", {"name": lab, "text": text, "label": lab})
     except Exception:
         pass
+    # 사진 폴더 병합 (가장 낮은 우선순위)
+    for lab, entry in _photo_lookup().items():
+        if lab not in out:
+            out[lab] = entry
     return out
 
 
